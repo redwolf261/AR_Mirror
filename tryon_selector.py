@@ -18,6 +18,10 @@ import numpy as np
 from pathlib import Path
 import sys
 import logging
+import json
+import threading
+import urllib.request
+import urllib.error
 from collections import deque
 import time
 
@@ -65,6 +69,209 @@ def _on_mouse(event, x, y, flags, _param):
     elif event == cv2.EVENT_MOUSEWHEEL:
         # flags > 0 → scroll up (negative delta), flags < 0 → scroll down
         _mouse["scroll"] += -1 if flags > 0 else 1
+
+
+# ---------------------------------------------------------------------------
+# SKU session logger  (Step 5B — tracks garment view time to disk)
+# ---------------------------------------------------------------------------
+class SKUSessionLogger:
+    """Appends per-garment dwell-time records to data/logs/session_data.jsonl."""
+
+    LOG_PATH = Path("data/logs/session_data.jsonl")
+
+    def __init__(self):
+        self.LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        self._sku:   str   = ""
+        self._shape: str   = "UNKNOWN"
+        self._start: float = 0.0
+
+    def on_change(self, new_sku: str, body_shape: str = "UNKNOWN"):
+        """Call when the selected garment changes."""
+        now = time.time()
+        if self._sku:
+            record = {
+                "sku":        self._sku,
+                "duration_s": round(now - self._start, 2),
+                "body_shape": self._shape,
+                "ts":         now,
+            }
+            with open(self.LOG_PATH, "a") as fh:
+                fh.write(json.dumps(record) + "\n")
+        self._sku   = new_sku or ""
+        self._shape = body_shape
+        self._start = now
+
+    def flush(self):
+        """Flush any pending record on exit."""
+        if self._sku:
+            self.on_change("", self._shape)
+
+
+# --------------------------------------------------------------------------
+# Cloud uploader  (Step 6 — background POST to NestJS /measurements)
+# --------------------------------------------------------------------------
+_BACKEND_URL = "http://localhost:3000"   # override via BACKEND_URL env var
+import os as _os
+_BACKEND_URL = _os.environ.get("BACKEND_URL", _BACKEND_URL)
+
+
+def _post_measurement_bg(payload: dict) -> None:
+    """POST *payload* to the backend /measurements endpoint (best-effort)."""
+    url  = f"{_BACKEND_URL}/measurements"
+    data = json.dumps(payload).encode("utf-8")
+    req  = urllib.request.Request(
+        url, data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            log.debug(f"[cloud] POST /measurements → {resp.status}")
+    except urllib.error.URLError as e:
+        log.debug(f"[cloud] POST skipped (backend unreachable): {e.reason}")
+    except Exception as e:
+        log.debug(f"[cloud] POST error: {e}")
+
+
+def try_upload_measurement(meas: dict, garment_sku: str, body_shape: str = "UNKNOWN") -> None:
+    """
+    Fire-and-forget upload of body measurements to the cloud backend.
+    Runs in a daemon thread so it never blocks the AR render loop.
+    """
+    if not meas:
+        return
+    shoulder_px = meas.get('shoulder_width', 0)
+    torso_px    = meas.get('torso_height', 0)
+    if shoulder_px < 10:
+        return
+    ppc          = shoulder_px / _REAL_SHOULDER_CM
+    shoulder_cm  = _REAL_SHOULDER_CM
+    chest_cm     = shoulder_cm * 1.25
+    torso_cm     = torso_px / ppc
+
+    payload = {
+        "shoulderWidthCm": round(shoulder_cm, 2),
+        "chestWidthCm":    round(chest_cm, 2),
+        "torsoLengthCm":   round(torso_cm, 2),
+        "confidence":      0.9,
+        "detectedRegions": ["upper_body"],
+        "garmentSku":      garment_sku,
+        "bodyShape":       body_shape,
+    }
+    t = threading.Thread(target=_post_measurement_bg, args=(payload,), daemon=True)
+    t.start()
+
+
+# ---------------------------------------------------------------------------
+# Measurements HUD helper
+# ---------------------------------------------------------------------------
+_REAL_SHOULDER_CM = 42.0   # same reference as BodyAwareGarmentFitter
+
+def _infer_size(shoulder_cm: float) -> tuple:
+    """Return (size_label, color_bgr) based on shoulder width in cm."""
+    if shoulder_cm < 38:
+        return "XS", (255, 200, 60)
+    elif shoulder_cm < 42:
+        return "S",  (80, 220, 110)
+    elif shoulder_cm < 46:
+        return "M",  (80, 220, 110)
+    elif shoulder_cm < 50:
+        return "L",  (255, 200, 60)
+    else:
+        return "XL", (60, 100, 255)
+
+def draw_measurements_hud(frame: np.ndarray, meas: dict) -> None:
+    """
+    Draw a measurements HUD in the bottom-right of the camera view.
+    Modifies *frame* in-place.
+    """
+    if meas is None:
+        return
+
+    h, w = frame.shape[:2]
+    shoulder_px = meas.get('shoulder_width', 0)
+    torso_px    = meas.get('torso_height',   0)
+    if shoulder_px < 10:
+        return   # no reliable measurement yet
+
+    ppc = shoulder_px / _REAL_SHOULDER_CM       # pixels-per-cm
+    shoulder_cm = _REAL_SHOULDER_CM
+    torso_cm    = torso_px / ppc
+    chest_cm    = shoulder_cm * 1.25            # rough anatomical ratio
+    waist_cm    = shoulder_cm * 0.92
+
+    size_lbl, size_col = _infer_size(shoulder_cm)
+
+    # HUD box: bottom-right area, width=240 height=140
+    bx, by = w - 250, h - 158
+    bw, bh = 240, 148
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (bx, by), (bx + bw, by + bh), (20, 20, 20), -1)
+    frame[:] = cv2.addWeighted(overlay, 0.72, frame, 0.28, 0)
+    cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (80, 80, 80), 1)
+
+    # Title
+    cv2.putText(frame, "BODY MEASUREMENTS", (bx + 8, by + 18),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (180, 180, 180), 1, cv2.LINE_AA)
+
+    rows = [
+        (f"Shoulder : {shoulder_cm:.1f} cm", (0, 210, 255)),
+        (f"Est. Chest: {chest_cm:.1f} cm",   (120, 220, 120)),
+        (f"Est. Waist: {waist_cm:.1f} cm",   (120, 220, 120)),
+        (f"Torso Ht : {torso_cm:.1f} cm",    (160, 160, 160)),
+    ]
+    for i, (txt, col) in enumerate(rows):
+        cv2.putText(frame, txt, (bx + 8, by + 38 + i * 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.44, col, 1, cv2.LINE_AA)
+
+    # Size badge
+    cv2.rectangle(frame, (bx + 8, by + bh - 32), (bx + bw - 8, by + bh - 8),
+                  size_col, -1)
+    cv2.putText(frame, f"Est. Size: {size_lbl}", (bx + 16, by + bh - 14),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10, 10, 10), 2, cv2.LINE_AA)
+
+
+# ---------------------------------------------------------------------------
+# Style advice HUD helper  (Step 5A)
+# ---------------------------------------------------------------------------
+_PALETTE_COLOR = {
+    "bright":      (0, 255, 200),
+    "jewel_tones": (200, 100, 255),
+    "pastels":     (180, 220, 255),
+    "neutrals":    (200, 200, 200),
+    "bold":        (0, 120, 255),
+    "any":         (160, 220, 120),
+}
+
+
+def draw_style_advice_hud(frame: np.ndarray, advice_list: list) -> None:
+    """
+    Draw top-3 style recommendations above the measurements HUD.
+    Modifies *frame* in-place.
+    """
+    if not advice_list:
+        return
+    h, w = frame.shape[:2]
+    rows   = min(3, len(advice_list))
+    row_h  = 22
+    bx, bh = w - 250, rows * row_h + 28
+    by     = h - 158 - bh - 8    # sit directly above measurements HUD
+
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (bx, by), (bx + 240, by + bh), (20, 20, 40), -1)
+    frame[:] = cv2.addWeighted(overlay, 0.72, frame, 0.28, 0)
+    cv2.rectangle(frame, (bx, by), (bx + 240, by + bh), (60, 60, 100), 1)
+
+    cv2.putText(frame, "STYLE TIPS", (bx + 8, by + 16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (180, 160, 255), 1, cv2.LINE_AA)
+
+    for i, adv in enumerate(advice_list[:rows]):
+        pal_name = adv.color_suggestion.value if hasattr(adv.color_suggestion, 'value') \
+                   else str(adv.color_suggestion)
+        col = _PALETTE_COLOR.get(pal_name, (160, 200, 160))
+        label = f"{adv.category[:18]:18s}  {pal_name[:8]}"
+        cv2.putText(frame, label, (bx + 8, by + 26 + (i + 1) * row_h),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, col, 1, cv2.LINE_AA)
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +417,106 @@ class GarmentRenderer:
         self._dbg_count    = 0      # controls diagnostic print rate
         self._init_fitter()
         self._init_pipeline()
+        # Phase 3: per-joint landmark smoother (velocity-adaptive EMA)
+        try:
+            from src.core.landmark_smoother import LandmarkSmoother
+            self._landmark_smoother = LandmarkSmoother()
+            log.info("Phase 3: LandmarkSmoother active")
+        except Exception as _ls_err:
+            self._landmark_smoother = None
+            log.debug(f"LandmarkSmoother unavailable: {_ls_err}")
+        # Phase 4A: multi-garment layer manager
+        try:
+            sys.path.insert(0, str(Path(__file__).parent / "python-ml" / "src"))
+            from multi_garment_system import (LayerManager, LayerType,
+                                              ProductCategory, GarmentLayer)
+            self._layer_manager = LayerManager()
+            self._LayerType = LayerType
+            self._ProductCategory = ProductCategory
+            self._GarmentLayer = GarmentLayer
+            self._multi_garment_available = True
+            log.info("Phase 4A: LayerManager active  (L = add layer, U = clear)")
+        except Exception as _mg_err:
+            self._layer_manager = None
+            self._multi_garment_available = False
+            log.debug(f"LayerManager unavailable: {_mg_err}")
+        self._extra_layers: list = []   # filenames stacked as outer garments
+        # Phase 5A: style recommender
+        try:
+            sys.path.insert(0, str(Path(__file__).parent / "python-ml" / "src"))
+            from style_recommender import StyleRecommender, BodyMeasurementProfile
+            self._style_recommender = StyleRecommender()
+            self._StyleBodyProfile  = BodyMeasurementProfile
+            self._style_advice: list = []
+            log.info("Phase 5A: StyleRecommender active")
+        except Exception as _sr_err:
+            self._style_recommender = None
+            self._StyleBodyProfile  = None
+            self._style_advice: list = []
+            log.debug(f"StyleRecommender unavailable: {_sr_err}")
+
+    # ---- Phase 5A: recompute style advice from current measurements ----
+    def refresh_style_advice(self, meas: dict) -> list:
+        """Classify body shape & return top-3 style recommendation objects."""
+        if self._style_recommender is None or meas is None:
+            return []
+        shoulder_px = meas.get('shoulder_width', 0)
+        torso_px    = meas.get('torso_height',   0)
+        if shoulder_px < 10:
+            return []
+        ppc         = shoulder_px / _REAL_SHOULDER_CM
+        shoulder_cm = _REAL_SHOULDER_CM
+        chest_cm    = shoulder_cm * 1.25
+        torso_cm    = torso_px / ppc
+        try:
+            profile = self._StyleBodyProfile(
+                shoulder_width_cm=shoulder_cm,
+                chest_width_cm=chest_cm,
+                torso_length_cm=torso_cm,
+            )
+            self._style_advice = self._style_recommender.recommend(profile)[:3]
+        except Exception as _e:
+            log.debug(f"Style advice error: {_e}")
+            self._style_advice = []
+        return self._style_advice
+
+    # ---- Phase 4A: composite extra layers on top of primary garment ----
+    def apply_extra_layers(self, frame: np.ndarray) -> np.ndarray:
+        """Composite any extra-layered garments (e.g. jacket over shirt) onto frame."""
+        if not self._extra_layers or not self._multi_garment_available:
+            return frame
+
+        # Build landmark dict from last cached measurements
+        lm_dict = None
+        if self._last_meas is not None:
+            lms = self._last_meas.get('landmarks')
+            if lms is not None:
+                lm_dict = self._lm_to_dict(lms)
+
+        for fn in self._extra_layers:
+            cloth_rgb, mask = self._load(fn)
+            if cloth_rgb is None:
+                continue
+            cloth_bgr = cv2.cvtColor(
+                (cloth_rgb * 255).astype(np.uint8), cv2.COLOR_RGB2BGR
+            )
+            try:
+                layer = self._GarmentLayer(
+                    garment_id=fn,
+                    category=self._ProductCategory.JACKET,
+                    layer_type=self._LayerType.OUTER,
+                    z_index=3,
+                    overlay_image=cloth_bgr,
+                    scale_factor=1.04,   # slightly bigger to sit over primary
+                    opacity=0.90,
+                )
+                if lm_dict is not None:
+                    frame = self._layer_manager._composite_layer(frame, layer, lm_dict)
+                else:
+                    frame = self._layer_manager._composite_layer_simple(frame, layer)
+            except Exception as _e:
+                log.debug(f"Extra layer '{fn}' composite error: {_e}")
+        return frame
 
     # ---- tier-2: body-aware geometric fitter ----
     def _init_fitter(self):
@@ -359,6 +666,12 @@ class GarmentRenderer:
             try:
                 landmarks   = measurements['landmarks']
                 mp_lm_dict  = self._lm_to_dict(landmarks)
+                # Phase 3: smooth landmark positions before GMM
+                if self._landmark_smoother is not None:
+                    h_fr, w_fr = frame.shape[:2]
+                    mp_lm_dict = self._landmark_smoother.smooth_dict(
+                        mp_lm_dict, frame_shape=(h_fr, w_fr)
+                    )
                 body_mask   = measurements.get('body_mask')
 
                 # Person image: RGB float32 [0,1] at 256×192
@@ -474,8 +787,10 @@ def main():
         log.error("Ensure CP-VTON dataset is at  dataset/train/cloth/")
         sys.exit(1)
 
-    panel    = GarmentPanel()
-    renderer = GarmentRenderer()
+    panel      = GarmentPanel()
+    renderer   = GarmentRenderer()
+    sku_logger = SKUSessionLogger()
+    prev_sel   = None
 
     if not panel.filenames:
         log.error("No garment images found in dataset/train/cloth/")
@@ -525,6 +840,22 @@ def main():
         sel   = panel.selected_filename
         frame = renderer.render(f, sel) if sel else f
 
+        # Phase 4A: composite extra layers (multi-garment stacking)
+        if renderer._extra_layers:
+            frame = renderer.apply_extra_layers(frame)
+
+        # Phase 5: update style advice + SKU logger when garment changes
+        if sel != prev_sel:
+            body_shape = "UNKNOWN"
+            if renderer._style_recommender is not None and renderer._last_meas is not None:
+                renderer.refresh_style_advice(renderer._last_meas)
+                if renderer._style_advice:
+                    body_shape = renderer._style_advice[0].body_shape.value
+            sku_logger.on_change(sel or "", body_shape)
+            # Phase 6: upload to cloud backend (best-effort, non-blocking)
+            try_upload_measurement(renderer._last_meas, sel or "", body_shape)
+            prev_sel = sel
+
         # ── DEBUG: draw body segmentation bounding box ──────────
         if renderer._last_meas is not None:
             bm = renderer._last_meas.get('body_mask')
@@ -553,12 +884,19 @@ def main():
         cv2.rectangle(frame, (0, 0), (400, 70), (0, 0, 0), -1)   # status bar bg
         cv2.putText(frame, f"FPS: {fps:.0f}", (12, 28),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 80), 2, cv2.LINE_AA)
-        cv2.putText(frame, f"Wearing: {sel or 'none'}", (12, 56),
+        layer_badge = f"  +{len(renderer._extra_layers)} layer(s)" if renderer._extra_layers else ""
+        cv2.putText(frame, f"Wearing: {sel or 'none'}{layer_badge}", (12, 56),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 210, 255), 1, cv2.LINE_AA)
         cv2.putText(frame,
-                    "Click garment on right  |  Scroll to browse  |  Q = quit",
+                    "Click/W-S-A-D=select  |  L=add layer  U=clear layers  |  Q=quit",
                     (10, CAM_H - 12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, (160, 160, 160), 1, cv2.LINE_AA)
+
+        # Phase 5A: style advice HUD (above measurements)
+        draw_style_advice_hud(frame, renderer._style_advice)
+
+        # Phase 4B: Measurements HUD (bottom-right corner)
+        draw_measurements_hud(frame, renderer._last_meas)
 
         # ── Compose full window ───────────────────────────────
         right = panel.render()
@@ -577,7 +915,17 @@ def main():
             panel.navigate(-1)
         elif key in (83, ord('d')):          # RIGHT
             panel.navigate(+1)
+        elif key == ord('l'):               # L  — add current garment as extra layer
+            if sel and sel not in renderer._extra_layers:
+                renderer._extra_layers.append(sel)
+                log.info(f"Layer added: {sel}  (total layers: {len(renderer._extra_layers)})")
+            elif sel:
+                log.info(f"'{sel}' is already a layer")
+        elif key == ord('u'):               # U  — clear all extra layers
+            renderer._extra_layers.clear()
+            log.info("All extra layers cleared")
 
+    sku_logger.flush()
     cap.release()
     cv2.destroyAllWindows()
     log.info("Bye!")

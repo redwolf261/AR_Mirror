@@ -150,6 +150,52 @@ class LandmarkSmoother:
             'tracked_landmarks': len(self._smoothed),
         }
     
+    def smooth_dict(
+        self,
+        lm_dict: dict,
+        frame_shape: tuple = (720, 1280),
+    ) -> dict:
+        """Smooth a landmark dict in-place and return it.
+
+        Args:
+            lm_dict: {idx: {'x': float, 'y': float, 'visibility': float}}
+                     (output of GarmentRenderer._lm_to_dict / tryon_selector).
+            frame_shape: (height, width) for pixel-space velocity computation.
+
+        Returns:
+            The same dict with smoothed x, y values.
+        """
+        h, w = frame_shape
+        self.frame_count += 1
+
+        for idx, entry in lm_dict.items():
+            raw = np.array([entry['x'], entry['y'], 0.0], dtype=np.float64)
+
+            if idx not in self._smoothed:
+                self._smoothed[idx] = raw.copy()
+                self._prev_raw[idx] = raw.copy()
+                continue
+
+            prev = self._prev_raw[idx]
+            dx = (raw[0] - prev[0]) * w
+            dy = (raw[1] - prev[1]) * h
+            velocity = np.sqrt(dx * dx + dy * dy)
+
+            base_alpha = self._alpha.get(idx, self._default_alpha)
+            if velocity > self.velocity_threshold:
+                alpha = min(base_alpha * self.velocity_boost, self.max_alpha)
+            else:
+                alpha = base_alpha
+
+            smoothed = alpha * raw + (1.0 - alpha) * self._smoothed[idx]
+            self._smoothed[idx] = smoothed
+            self._prev_raw[idx] = raw.copy()
+
+            entry['x'] = float(smoothed[0])
+            entry['y'] = float(smoothed[1])
+
+        return lm_dict
+
     def reset(self):
         """Clear all state (e.g., when person leaves frame)."""
         self._smoothed.clear()

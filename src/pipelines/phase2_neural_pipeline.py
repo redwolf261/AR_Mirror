@@ -189,6 +189,19 @@ class Phase2NeuralPipeline:
         except Exception as e:
             logger.info(f"⚠ Temporal cache not available: {e}")
             self.temporal_cache = None
+
+        # Phase 3: temporal output filter (warped cloth smoothing)
+        try:
+            from src.hybrid.temporal_stabilization import TemporalFilter, AdaptiveEMA
+            self.temporal_filter = TemporalFilter(buffer_size=3)
+            self.adaptive_ema    = AdaptiveEMA(window_size=5)
+            self._prev_lm_vals: Optional[np.ndarray] = None   # for motion magnitude
+            logger.info("✓ Phase 3 temporal filter active")
+        except Exception as e:
+            self.temporal_filter = None
+            self.adaptive_ema    = None
+            self._prev_lm_vals   = None
+            logger.info(f"⚠ Temporal filter unavailable: {e}")
         
         logger.info("="*70)
         logger.info(f"✅ PHASE 2 READY - Device: {self.device}")
@@ -587,6 +600,23 @@ class Phase2NeuralPipeline:
 
         # === Instrumentation: track garment pixel drift ===
         self.gpd_metric.update(warped_cloth, warped_mask, 0.0)
+
+        # === Phase 3: temporal smoothing on warped cloth output ===
+        if self.adaptive_ema is not None:
+            # Estimate motion from landmark displacement across frames
+            lm_vals = np.array([[v['x'], v['y']] for v in mp_landmarks.values()],
+                                dtype=np.float32)
+            if hasattr(self, '_prev_lm_vals') and self._prev_lm_vals is not None:
+                disp = np.linalg.norm(lm_vals - self._prev_lm_vals, axis=-1)
+                motion_mag = float(np.mean(disp)) * 100.0   # scale to ~[0,5]
+            else:
+                motion_mag = 0.0
+            self._prev_lm_vals = lm_vals
+            warped_cloth = self.adaptive_ema.smooth(warped_cloth, motion_mag)
+
+        if self.temporal_filter is not None:
+            warped_cloth = self.temporal_filter.apply_filter(warped_cloth)
+            warped_cloth = np.clip(warped_cloth, 0.0, 1.0)
 
         return NeuralWarpResult(
             warped_cloth=warped_cloth,
