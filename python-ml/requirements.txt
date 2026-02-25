@@ -1,0 +1,31 @@
+# Core ML Dependencies
+opencv-python>=4.8.0
+mediapipe>=0.10.30
+numpy>=1.24.0
+
+# Web Service
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+requests>=2.31.0
+
+# Data Processing
+pandas>=2.0.0
+pillow>=10.0.0
+
+# Async
+aiofiles>=23.0.0
+asyncio-mqtt>=0.16.0
+
+# Optional: GPU Support (uncomment if using CUDA)
+# torch>=2.0.0+cu118
+# torchvision>=0.15.0+cu118
+
+# FitEngine — Men's Formal Wear Size Engine
+rtmlib>=0.0.13               # RTMPose keypoint detection (Apache 2.0)
+gradio>=4.0.0                # Gradio UI for pilot app
+h5py>=3.10.0                 # HDF5 datasets for synthetic data (Phase 2)
+pyyaml>=6.0.0                # Config loading
+onnx>=1.16.0                 # ONNX export (Phase 3)
+scikit-learn>=1.4.0          # Brand calibration LogisticRegression
+torch>=2.5.1                 # PyTorch (STAR body model, regressor training)
+onnxruntime-gpu>=1.20.1      # ONNX Runtime GPU inference

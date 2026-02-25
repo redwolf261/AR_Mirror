@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "created_at": "2026-01-05T18:24:43.931782",
+  "total_skus": 3,
+  "corrections": {
+    "brand_a_shirt_m": {
+      "sku": "brand_a_shirt_m",
+      "shoulder_tolerance_cm": 0.4623880841126121,
+      "chest_tolerance_cm": 0.30624799432910405,
+      "hip_tolerance_cm": null,
+      "inseam_tolerance_cm": null,
+      "confidence_multiplier": 0.0,
+      "samples_used": 15,
+      "accuracy": 0.0,
+      "created_at": "2026-01-05T18:24:43.930150",
+      "expires_at": "2026-04-05T18:24:43.930150"
+    },
+    "brand_b_tshirt_l": {
+      "sku": "brand_b_tshirt_l",
+      "shoulder_tolerance_cm": 0.4836713976595713,
+      "chest_tolerance_cm": 0.29342285169322924,
+      "hip_tolerance_cm": null,
+      "inseam_tolerance_cm": null,
+      "confidence_multiplier": 0.0,
+      "samples_used": 12,
+      "accuracy": 0.0,
+      "created_at": "2026-01-05T18:24:43.930528",
+      "expires_at": "2026-04-05T18:24:43.930528"
+    },
+    "brand_c_dress_s": {
+      "sku": "brand_c_dress_s",
+      "shoulder_tolerance_cm": 0.4756090450603232,
+      "chest_tolerance_cm": 0.28841103694867726,
+      "hip_tolerance_cm": 0.4284758024951247,
+      "inseam_tolerance_cm": null,
+      "confidence_multiplier": 1.0,
+      "samples_used": 20,
+      "accuracy": 0.65,
+      "created_at": "2026-01-05T18:24:43.930680",
+      "expires_at": "2026-04-05T18:24:43.930680"
+    }
+  }
+}

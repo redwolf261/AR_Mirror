@@ -1,0 +1,7 @@
+{
+  "pytorch": "cpu",
+  "gmm": "present",
+  "tom": "present",
+  "mediapipe": "missing",
+  "gpu_test": "skipped"
+}

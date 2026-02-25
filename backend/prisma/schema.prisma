@@ -1,0 +1,312 @@
+// Chic India AR Platform - Database Schema
+// PostgreSQL with Prisma ORM
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User management
+model User {
+  id            String   @id @default(uuid())
+  email         String?  @unique
+  phoneNumber   String?  @unique
+  name          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  // Relations
+  sessions      ARSession[]
+  measurements  Measurement[]
+  orders        Order[]
+  
+  @@index([email])
+  @@index([phoneNumber])
+}
+
+// AR try-on sessions
+model ARSession {
+  id              String   @id @default(uuid())
+  userId          String?
+  user            User?    @relation(fields: [userId], references: [id])
+  
+  deviceInfo      Json     // Device details, OS, screen size
+  startedAt       DateTime @default(now())
+  endedAt         DateTime?
+  durationSeconds Int?
+  
+  // Session outcomes
+  itemsTriedOn    Int      @default(0)
+  addedToCart     Boolean  @default(false)
+  purchased       Boolean  @default(false)
+  
+  // Relations
+  measurements    Measurement[]
+  abTestAssignments ABTestAssignment[]
+  
+  @@index([userId])
+  @@index([startedAt])
+}
+
+// Body measurements from AR system
+model Measurement {
+  id                String   @id @default(uuid())
+  sessionId         String
+  session           ARSession @relation(fields: [sessionId], references: [id])
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id])
+  
+  // Upper body (always available)
+  shoulderWidthCm   Float
+  chestWidthCm      Float
+  torsoLengthCm     Float
+  
+  // Lower body (optional)
+  waistCm           Float?
+  hipCm             Float?
+  inseamCm          Float?
+  
+  // Metadata
+  confidence        Float
+  detectedRegions   String[] // Array of detected body regions
+  timestamp         DateTime @default(now())
+  
+  // Relations
+  fitPredictions    FitPrediction[]
+  
+  @@index([sessionId])
+  @@index([userId])
+  @@index([timestamp])
+}
+
+// Product catalog
+model Product {
+  id              String   @id @default(uuid())
+  sku             String   @unique
+  name            String
+  category        String   // shirt, pants, dress, etc.
+  subcategory     String?  // t-shirt, formal-shirt, jeans, etc.
+  
+  brand           String
+  price           Float
+  currency        String   @default("INR")
+  
+  images          String[] // Array of image URLs
+  description     String?
+  
+  // Garment specifications (for fit matching)
+  garmentSpecs    GarmentSpec?
+  
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  fitPredictions  FitPrediction[]
+  orders          OrderItem[]
+  skuCorrections  SKUCorrection[]
+  
+  @@index([sku])
+  @@index([category])
+  @@index([brand])
+}
+
+// Garment specifications for fit matching
+model GarmentSpec {
+  id                String   @id @default(uuid())
+  productId         String   @unique
+  product           Product  @relation(fields: [productId], references: [id])
+  
+  // Upper body specs
+  shoulderWidthCm   Float?
+  chestWidthCm      Float?
+  lengthCm          Float?
+  
+  // Lower body specs
+  waistCm           Float?
+  hipCm             Float?
+  inseamCm          Float?
+  
+  // Tolerances
+  tightTolerance    Float    @default(1.0)  // cm
+  looseTolerance    Float    @default(2.0)  // cm
+  
+  updatedAt         DateTime @updatedAt
+}
+
+// Fit predictions from AR system
+model FitPrediction {
+  id              String   @id @default(uuid())
+  measurementId   String
+  measurement     Measurement @relation(fields: [measurementId], references: [id])
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id])
+  
+  // Prediction results
+  decision        String   // TIGHT, GOOD, LOOSE
+  confidence      Float
+  
+  // Measurements used
+  shoulderFit     String?
+  chestFit        String?
+  waistFit        String?
+  hipFit          String?
+  
+  // SKU correction applied
+  correctionApplied Boolean @default(false)
+  correctionId      String?
+  
+  // Ground truth (filled after purchase/return)
+  actualFit         String?  // TIGHT, GOOD, LOOSE
+  userFeedback      String?  // User's comment
+  wasReturned       Boolean?
+  returnReason      String?
+  
+  timestamp       DateTime @default(now())
+  
+  @@index([measurementId])
+  @@index([productId])
+  @@index([timestamp])
+}
+
+// Per-SKU learned corrections (PHASE 2)
+model SKUCorrection {
+  id              String   @id @default(uuid())
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id])
+  
+  // Demographic filters (optional)
+  region          String?  // "north", "south", etc.
+  ageGroup        String?  // "18-25", "26-35", etc.
+  
+  // Learned biases
+  shoulderBiasCm  Float    @default(0.0)
+  chestBiasCm     Float    @default(0.0)
+  waistBiasCm     Float    @default(0.0)
+  
+  // Adjusted tolerances
+  tightTolerance  Float?
+  looseTolerance  Float?
+  
+  // Training metadata
+  sampleCount     Int      // Number of measurements used
+  accuracy        Float    // % predictions matching actual
+  lastTrainedAt   DateTime @default(now())
+  expiresAt       DateTime // 90 days from training
+  
+  isActive        Boolean  @default(true)
+  
+  @@unique([productId, region, ageGroup])
+  @@index([productId])
+}
+
+// A/B testing framework (PHASE 2)
+model ABTest {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  description     String
+  
+  variants        String[] // ["control", "treatment_a", "treatment_b"]
+  startDate       DateTime
+  endDate         DateTime?
+  
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  
+  // Relations
+  assignments     ABTestAssignment[]
+  
+  @@index([name])
+}
+
+model ABTestAssignment {
+  id              String   @id @default(uuid())
+  testId          String
+  test            ABTest   @relation(fields: [testId], references: [id])
+  
+  sessionId       String
+  session         ARSession @relation(fields: [sessionId], references: [id])
+  
+  variant         String   // Which variant assigned
+  assignedAt      DateTime @default(now())
+  
+  // Outcome tracking
+  conversionEvent String?  // "added_to_cart", "purchased", etc.
+  conversionValue Float?
+  recordedAt      DateTime?
+  
+  @@unique([testId, sessionId])
+  @@index([testId])
+  @@index([sessionId])
+}
+
+// Orders (for tracking returns and ground truth)
+model Order {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  
+  totalAmount     Float
+  currency        String   @default("INR")
+  
+  status          String   // pending, confirmed, shipped, delivered, returned
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  items           OrderItem[]
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id              String   @id @default(uuid())
+  orderId         String
+  order           Order    @relation(fields: [orderId], references: [id])
+  
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id])
+  
+  quantity        Int      @default(1)
+  price           Float
+  
+  // Fit feedback (ground truth for PHASE 2)
+  wasReturned     Boolean  @default(false)
+  returnReason    String?
+  actualFit       String?  // TIGHT, GOOD, LOOSE (from customer feedback)
+  
+  @@index([orderId])
+  @@index([productId])
+}
+
+// Analytics aggregations (for dashboard)
+model DailyMetrics {
+  id              String   @id @default(uuid())
+  date            DateTime @unique @db.Date
+  
+  totalSessions   Int      @default(0)
+  totalMeasurements Int    @default(0)
+  totalOrders     Int      @default(0)
+  totalRevenue    Float    @default(0.0)
+  
+  // Fit accuracy metrics
+  fitPredictions  Int      @default(0)
+  accurateCount   Int      @default(0)
+  returnRate      Float    @default(0.0)
+  
+  // User engagement
+  avgSessionDuration Float  @default(0.0)
+  avgItemsTriedOn    Float  @default(0.0)
+  conversionRate     Float  @default(0.0)
+  
+  updatedAt       DateTime @updatedAt
+  
+  @@index([date])
+}

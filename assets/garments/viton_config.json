@@ -1,0 +1,40 @@
+{
+  "viton_dataset_root": "viton_data",
+  "enable_viton": false,
+  "fallback_to_assets": true,
+  "sku_to_viton_mapping": {
+    "TSH-001": "00001_00",
+    "TSH-002": "00002_00",
+    "SHT-001": "00003_00",
+    "SHT-002": "00004_00",
+    "JKT-001": "00005_00",
+    "JKT-002": "00006_00",
+    "HOD-001": "00007_00",
+    "HOD-002": "00008_00",
+    "SWT-001": "00009_00",
+    "SWT-002": "00010_00",
+    "PLO-001": "00011_00",
+    "PLO-002": "00012_00"
+  },
+  "category_mapping": {
+    "TSH": "t-shirt",
+    "SHT": "shirt",
+    "JKT": "jacket",
+    "HOD": "hoodie",
+    "SWT": "sweater",
+    "PLO": "polo",
+    "SKU": "generic"
+  },
+  "image_settings": {
+    "cache_size_mb": 100,
+    "resize_on_load": true,
+    "target_size": [256, 384],
+    "preprocessing": "clahe"
+  },
+  "notes": [
+    "Set 'enable_viton' to true after downloading dataset",
+    "Run: python prepare_viton_dataset.py --download",
+    "Customize SKU mappings to match your inventory",
+    "VITON IDs format: 00001_00 (image_number_variation)"
+  ]
+}

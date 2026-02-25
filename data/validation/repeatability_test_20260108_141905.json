@@ -1,0 +1,133 @@
+{
+  "test_type": "repeatability",
+  "date": "2026-01-08T14:19:05.602937",
+  "num_runs": 10,
+  "passed": true,
+  "gate_threshold": 5.0,
+  "statistics": {
+    "shoulder": {
+      "mean": 45.0,
+      "std": 0.0,
+      "cv": 0.0,
+      "min": 45.0,
+      "max": 45.0,
+      "values": null
+    },
+    "chest": {
+      "mean": 38.00229360708117,
+      "std": 0.047538871261785326,
+      "cv": 0.1250947423155721,
+      "min": 37.92630551533738,
+      "max": 38.075217515864516,
+      "values": null
+    },
+    "torso": {
+      "mean": 0.0,
+      "std": 0.0,
+      "cv": 0,
+      "min": 0.0,
+      "max": 0.0,
+      "values": null
+    },
+    "confidence": {
+      "mean": 0.4242424242424242,
+      "std": 5.551115123125783e-17,
+      "cv": 1.3084771361653631e-14,
+      "min": 0.42424242424242425,
+      "max": 0.42424242424242425,
+      "values": null
+    }
+  },
+  "raw_measurements": [
+    {
+      "run": 1,
+      "timestamp": "2026-01-08T14:19:03.290241",
+      "shoulder_cm": 45.0,
+      "chest_cm": 38.02782654518705,
+      "torso_cm": 0.0,
+      "confidence": 0.42424242424242425,
+      "fit_decision": "LOOSE"
+    },
+    {
+      "run": 2,
+      "timestamp": "2026-01-08T14:19:03.464039",
+      "shoulder_cm": 45.0,
+      "chest_cm": 38.04181673796465,
+      "torso_cm": 0.0,
+      "confidence": 0.42424242424242425,
+      "fit_decision": "LOOSE"
+    },
+    {
+      "run": 3,
+      "timestamp": "2026-01-08T14:19:03.671939",
+      "shoulder_cm": 45.0,
+      "chest_cm": 37.99334701128172,
+      "torso_cm": 0.0,
+      "confidence": 0.42424242424242425,
+      "fit_decision": "LOOSE"
+    },
+    {
+      "run": 4,
+      "timestamp": "2026-01-08T14:19:03.829760",
+      "shoulder_cm": 45.0,
+      "chest_cm": 37.96863113001809,
+      "torso_cm": 0.0,
+      "confidence": 0.42424242424242425,
+      "fit_decision": "LOOSE"
+    },
+    {
+      "run": 5,
+      "timestamp": "2026-01-08T14:19:03.982651",
+      "shoulder_cm": 45.0,
+      "chest_cm": 37.9430661128785,
+      "torso_cm": 0.0,
+      "confidence": 0.42424242424242425,
+      "fit_decision": "LOOSE"
+    },
+    {
+      "run": 6,
+      "timestamp": "2026-01-08T14:19:04.158464",
+      "shoulder_cm": 45.0,
+      "chest_cm": 37.96808170855612,
+      "torso_cm": 0.0,
+      "confidence": 0.42424242424242425,
+      "fit_decision": "LOOSE"
+    },
+    {
+      "run": 7,
+      "timestamp": "2026-01-08T14:19:04.317603",
+      "shoulder_cm": 45.0,
+      "chest_cm": 38.05748236146752,
+      "torso_cm": 0.0,
+      "confidence": 0.42424242424242425,
+      "fit_decision": "LOOSE"
+    },
+    {
+      "run": 8,
+      "timestamp": "2026-01-08T14:19:04.602194",
+      "shoulder_cm": 45.0,
+      "chest_cm": 38.02116143225623,
+      "torso_cm": 0.0,
+      "confidence": 0.42424242424242425,
+      "fit_decision": "LOOSE"
+    },
+    {
+      "run": 9,
+      "timestamp": "2026-01-08T14:19:04.943783",
+      "shoulder_cm": 45.0,
+      "chest_cm": 38.075217515864516,
+      "torso_cm": 0.0,
+      "confidence": 0.42424242424242425,
+      "fit_decision": "LOOSE"
+    },
+    {
+      "run": 10,
+      "timestamp": "2026-01-08T14:19:05.242779",
+      "shoulder_cm": 45.0,
+      "chest_cm": 37.92630551533738,
+      "torso_cm": 0.0,
+      "confidence": 0.42424242424242425,
+      "fit_decision": "LOOSE"
+    }
+  ]
+}

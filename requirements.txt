@@ -1,0 +1,30 @@
+# =============================================================
+# AR Mirror - Pinned Dependencies (Python 3.12, CUDA 12.x)
+# Install: pip install -r requirements.txt
+# For a full pip-freeze snapshot, see requirements-ar.txt
+# =============================================================
+
+# --- Core ---
+numpy==1.26.4
+opencv-python==4.10.0.84
+Pillow>=10.0.0
+
+# --- MediaPipe (pose detection) ---
+# Uses lightweight mediapipe without heavy TF dependency
+mediapipe==0.10.14
+
+# --- ONNX Runtime with GPU (body parsing, garment warping) ---
+# Includes CUDA 12 + cuDNN bundled - no separate CUDA toolkit install needed
+onnxruntime-gpu==1.20.1
+
+# --- PyTorch with CUDA 12.4 (neural models) ---
+# Install separately FIRST via:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+# Then install this file. Listed here for documentation only:
+# torch==2.5.1+cu124
+# torchvision==0.20.1+cu124
+
+# --- Utilities ---
+gdown>=5.1.0
+kaggle>=1.6.0
+scipy>=1.12.0

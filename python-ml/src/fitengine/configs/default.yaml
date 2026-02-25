@@ -1,0 +1,67 @@
+model:
+  input_dim: 263
+  hidden: [1024, 1024, 512]
+  beta_dim: 10
+  theta_dim: 72
+  dropout: 0.2
+
+classifier:
+  collar_classes: 8    # 14.0 to 17.5 in 0.5 increments
+  jacket_classes: 8    # 36 to 50 even sizes
+  trouser_classes: 10  # 28 to 46 even waist sizes
+
+training:
+  phase1_epochs: 30
+  phase2_epochs: 20
+  batch_size: 256
+  accum_steps: 4
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  loss_weights:
+    collar: 0.4
+    jacket: 0.4
+    trouser: 0.2
+    beta: 0.1
+  height_dropout: 0.05   # near-required for formalwear
+
+data:
+  synthetic_h5: data/pose_syn.h5
+  blender_h5: data/pose_blender.h5
+  val_split: 0.05
+  n_workers: 4
+  phase2_blender_ratio: 0.30
+
+silhouette:
+  n_bins: 32
+
+alignment:
+  front:
+    shoulder_tilt_max_deg: 8.0     # relax to 12.0 if dark-suit pilot
+    torso_joint_conf_min: 0.4
+  side:
+    body_angle_target_deg: 90.0
+    body_angle_tolerance_deg: 20.0
+  timeout_seconds: 10
+
+smoother:
+  enabled: false   # Phase 3 enhancement
+
+vram_mb:
+  detector: 80
+  star: 150
+  regressor: 50
+  segmentor: 40
+  total: 320
+
+evaluation:
+  gates:
+    phase1:
+      jacket_adjacent_acc: 0.80
+      nonadjacent_error_rate: 0.10
+    production:
+      jacket_adjacent_acc: 0.88
+      collar_adjacent_acc: 0.85
+      nonadjacent_error_rate: 0.05
+
+models_cache_dir: ~/.fitengine/models
+star_cache_dir: ~/.fitengine/star

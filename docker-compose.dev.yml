@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  # Python ML Service - Development Overrides
+  ml-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.python-ml
+    # Mount source code for hot reloading
+    volumes:
+      - ./python-ml/src:/app/src
+      - ./python-ml/tests:/app/tests
+      - ./python-ml/data:/app/data
+      # Exclude models to avoid large file syncing if not needed, or include if models change
+      - ./python-ml/models:/app/models
+    # Run with uvicorn reload for immediate updates
+    # Note: We need to point to the module path src.python_ml_service:app
+    command: [ "uvicorn", "src.python_ml_service:app", "--host", "0.0.0.0", "--port", "8000", "--reload" ]
+    environment:
+      - DEBUG=true
+      - PYTHONDONTWRITEBYTECODE=1
+
+  # Backend API - Development Overrides
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    # Mount source code for hot reloading
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/test:/app/test
+      - ./backend/prisma:/app/prisma
+    # Use NestJS dev mode
+    command: [ "npm", "run", "start:dev" ]
+    environment:
+      - NODE_ENV=development
+
+  # Database - Development
+  postgres:
+    ports:
+      - "5432:5432" # Expose to host for local inspection tools (pgAdmin, DBeaver)

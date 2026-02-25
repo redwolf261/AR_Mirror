@@ -1,0 +1,140 @@
+# Production AR Try-On System Configuration
+
+system:
+  name: "AR Try-On Production System"
+  version: "2.0.0"
+  mode: "production"  # development, staging, production
+
+camera:
+  device_index: 0
+  width: 640
+  height: 480
+  fps_target: 30
+  auto_exposure: true
+
+vision:
+  # Pose detection
+  pose:
+    model: "mediapipe_pose_lite"
+    confidence_threshold: 0.5
+    tracking_confidence: 0.5
+  
+  # Depth estimation
+  depth:
+    enabled: false  # Enable for enhanced yaw correction
+    use_ml: false  # Use MiDaS ML model (slower, more accurate)
+    model: "MiDaS_small"  # MiDaS_small, DPT_Large
+    fallback_geometric: true
+  
+  # Segmentation
+  segmentation:
+    enabled: false  # Enable for precise body parsing
+    model: "SCHP"  # Self-Correction Human Parsing
+    confidence_threshold: 0.6
+
+body_analysis:
+  # Measurements
+  measurements:
+    scale_method: "shoulder_reference"  # shoulder_reference, height_based
+    shoulder_reference_cm: 40.0  # Average shoulder width
+    circumference_method: "ellipse"  # ellipse, direct
+    smoothing_window: 5  # Frames
+  
+  # Shape classification
+  shape:
+    enabled: true
+    algorithm: "rule_based"  # rule_based, ml_clustering
+    clusters: ["V", "A", "Rectangle", "Oval", "Athletic", "Petite"]
+    confidence_threshold: 0.6
+  
+  # Presentation analysis
+  presentation:
+    enabled: true
+    allow_user_override: true
+    body_ratio_weight: 0.25
+    garment_history_weight: 0.75
+    filter_explicit_only: true  # Only filter explicit-affinity items
+
+garment:
+  # Inventory
+  inventory_path: "garment_inventory.json"
+  assets_root: "garment_assets"
+  
+  # VITON integration
+  viton:
+    enabled: true
+    dataset_root: "dataset"
+    cache_size_mb: 500
+  
+  # Selector
+  selector:
+    cache_size: 10  # LRU cache size
+    preload_count: 3  # Preload ahead count
+    preload_threads: 2
+  
+  # Fit engine
+  fit:
+    size_range: ["XS", "S", "M", "L", "XL", "XXL"]
+    tolerance_cm: 2.0  # GOOD fit tolerance
+    loose_threshold_cm: 4.0
+    tight_threshold_cm: -2.0
+
+visualization:
+  # Overlay rendering
+  overlay:
+    enabled: true
+    alpha: 0.7
+    use_yaw_coupling: true
+    use_depth_occlusion: false  # Requires depth enabled
+  
+  # UI panels
+  ui:
+    show_main_panel: true
+    show_performance: false  # Debug mode
+    show_fit_details: true
+    panel_alpha: 0.6
+    font_scale: 0.5
+
+interaction:
+  # Keyboard controls
+  keyboard:
+    enabled: true
+    poll_rate_ms: 1
+    action_cooldown_ms: 200
+  
+  # Touch controls (future)
+  touch:
+    enabled: false
+
+learning:
+  # SKU corrections
+  sku_correction:
+    enabled: true
+    corrections_path: "learned_corrections/sku_corrections.json"
+    min_feedback_count: 3  # Minimum confirmations before applying bias
+    max_confidence_boost: 0.5
+
+performance:
+  # Frame processing
+  max_frame_time_ms: 100  # Target max latency
+  skip_frames_if_slow: true
+  
+  # Threading
+  async_preload: true
+  max_worker_threads: 3
+  
+  # Logging
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_timings: false
+  log_file: "logs/system.log"
+
+monitoring:
+  # Metrics tracking
+  track_fps: true
+  track_latency: true
+  track_cache_hits: true
+  
+  # Export
+  export_telemetry: false
+  telemetry_file: "logs/telemetry.jsonl"
+  export_interval_s: 60

@@ -1,0 +1,434 @@
+[
+    {
+        "sku": "TSH-001",
+        "size_label": "S",
+        "shoulder_cm": 42.0,
+        "chest_cm": 46.0,
+        "length_cm": 62.0,
+        "category": "t-shirt",
+        "brand": "UrbanFit"
+    },
+    {
+        "sku": "TSH-001",
+        "size_label": "M",
+        "shoulder_cm": 44.0,
+        "chest_cm": 50.0,
+        "length_cm": 65.0,
+        "category": "t-shirt",
+        "brand": "UrbanFit"
+    },
+    {
+        "sku": "TSH-001",
+        "size_label": "L",
+        "shoulder_cm": 46.0,
+        "chest_cm": 54.0,
+        "length_cm": 68.0,
+        "category": "t-shirt",
+        "brand": "UrbanFit"
+    },
+    {
+        "sku": "TSH-001",
+        "size_label": "XL",
+        "shoulder_cm": 48.0,
+        "chest_cm": 58.0,
+        "length_cm": 70.0,
+        "category": "t-shirt",
+        "brand": "UrbanFit"
+    },
+    {
+        "sku": "TSH-002",
+        "size_label": "S",
+        "shoulder_cm": 41.0,
+        "chest_cm": 45.0,
+        "length_cm": 61.0,
+        "category": "t-shirt",
+        "brand": "SportZone"
+    },
+    {
+        "sku": "TSH-002",
+        "size_label": "M",
+        "shoulder_cm": 43.0,
+        "chest_cm": 49.0,
+        "length_cm": 64.0,
+        "category": "t-shirt",
+        "brand": "SportZone"
+    },
+    {
+        "sku": "TSH-002",
+        "size_label": "L",
+        "shoulder_cm": 45.0,
+        "chest_cm": 53.0,
+        "length_cm": 67.0,
+        "category": "t-shirt",
+        "brand": "SportZone"
+    },
+    {
+        "sku": "TSH-002",
+        "size_label": "XL",
+        "shoulder_cm": 47.0,
+        "chest_cm": 57.0,
+        "length_cm": 69.0,
+        "category": "t-shirt",
+        "brand": "SportZone"
+    },
+    {
+        "sku": "SHT-001",
+        "size_label": "S",
+        "shoulder_cm": 41.0,
+        "chest_cm": 44.0,
+        "length_cm": 66.0,
+        "category": "shirt",
+        "brand": "FormalEdge"
+    },
+    {
+        "sku": "SHT-001",
+        "size_label": "M",
+        "shoulder_cm": 43.0,
+        "chest_cm": 48.0,
+        "length_cm": 68.0,
+        "category": "shirt",
+        "brand": "FormalEdge"
+    },
+    {
+        "sku": "SHT-001",
+        "size_label": "L",
+        "shoulder_cm": 45.0,
+        "chest_cm": 52.0,
+        "length_cm": 70.0,
+        "category": "shirt",
+        "brand": "FormalEdge"
+    },
+    {
+        "sku": "SHT-001",
+        "size_label": "XL",
+        "shoulder_cm": 47.0,
+        "chest_cm": 56.0,
+        "length_cm": 72.0,
+        "category": "shirt",
+        "brand": "FormalEdge"
+    },
+    {
+        "sku": "SHT-002",
+        "size_label": "S",
+        "shoulder_cm": 42.0,
+        "chest_cm": 47.0,
+        "length_cm": 65.0,
+        "category": "shirt",
+        "brand": "CasualVibes"
+    },
+    {
+        "sku": "SHT-002",
+        "size_label": "M",
+        "shoulder_cm": 44.0,
+        "chest_cm": 51.0,
+        "length_cm": 67.0,
+        "category": "shirt",
+        "brand": "CasualVibes"
+    },
+    {
+        "sku": "SHT-002",
+        "size_label": "L",
+        "shoulder_cm": 46.0,
+        "chest_cm": 55.0,
+        "length_cm": 69.0,
+        "category": "shirt",
+        "brand": "CasualVibes"
+    },
+    {
+        "sku": "SHT-002",
+        "size_label": "XL",
+        "shoulder_cm": 48.0,
+        "chest_cm": 59.0,
+        "length_cm": 71.0,
+        "category": "shirt",
+        "brand": "CasualVibes"
+    },
+    {
+        "sku": "JKT-001",
+        "size_label": "S",
+        "shoulder_cm": 43.0,
+        "chest_cm": 50.0,
+        "length_cm": 60.0,
+        "category": "jacket",
+        "brand": "UrbanFit"
+    },
+    {
+        "sku": "JKT-001",
+        "size_label": "M",
+        "shoulder_cm": 45.0,
+        "chest_cm": 54.0,
+        "length_cm": 62.0,
+        "category": "jacket",
+        "brand": "UrbanFit"
+    },
+    {
+        "sku": "JKT-001",
+        "size_label": "L",
+        "shoulder_cm": 47.0,
+        "chest_cm": 58.0,
+        "length_cm": 64.0,
+        "category": "jacket",
+        "brand": "UrbanFit"
+    },
+    {
+        "sku": "JKT-001",
+        "size_label": "XL",
+        "shoulder_cm": 49.0,
+        "chest_cm": 62.0,
+        "length_cm": 66.0,
+        "category": "jacket",
+        "brand": "UrbanFit"
+    },
+    {
+        "sku": "JKT-002",
+        "size_label": "S",
+        "shoulder_cm": 44.0,
+        "chest_cm": 52.0,
+        "length_cm": 62.0,
+        "category": "jacket",
+        "brand": "TechWear"
+    },
+    {
+        "sku": "JKT-002",
+        "size_label": "M",
+        "shoulder_cm": 46.0,
+        "chest_cm": 56.0,
+        "length_cm": 64.0,
+        "category": "jacket",
+        "brand": "TechWear"
+    },
+    {
+        "sku": "JKT-002",
+        "size_label": "L",
+        "shoulder_cm": 48.0,
+        "chest_cm": 60.0,
+        "length_cm": 66.0,
+        "category": "jacket",
+        "brand": "TechWear"
+    },
+    {
+        "sku": "JKT-002",
+        "size_label": "XL",
+        "shoulder_cm": 50.0,
+        "chest_cm": 64.0,
+        "length_cm": 68.0,
+        "category": "jacket",
+        "brand": "TechWear"
+    },
+    {
+        "sku": "HOD-001",
+        "size_label": "S",
+        "shoulder_cm": 44.0,
+        "chest_cm": 51.0,
+        "length_cm": 64.0,
+        "category": "hoodie",
+        "brand": "StreetStyle"
+    },
+    {
+        "sku": "HOD-001",
+        "size_label": "M",
+        "shoulder_cm": 46.0,
+        "chest_cm": 55.0,
+        "length_cm": 66.0,
+        "category": "hoodie",
+        "brand": "StreetStyle"
+    },
+    {
+        "sku": "HOD-001",
+        "size_label": "L",
+        "shoulder_cm": 48.0,
+        "chest_cm": 59.0,
+        "length_cm": 68.0,
+        "category": "hoodie",
+        "brand": "StreetStyle"
+    },
+    {
+        "sku": "HOD-001",
+        "size_label": "XL",
+        "shoulder_cm": 50.0,
+        "chest_cm": 63.0,
+        "length_cm": 70.0,
+        "category": "hoodie",
+        "brand": "StreetStyle"
+    },
+    {
+        "sku": "HOD-002",
+        "size_label": "S",
+        "shoulder_cm": 43.0,
+        "chest_cm": 50.0,
+        "length_cm": 63.0,
+        "category": "hoodie",
+        "brand": "SportZone"
+    },
+    {
+        "sku": "HOD-002",
+        "size_label": "M",
+        "shoulder_cm": 45.0,
+        "chest_cm": 54.0,
+        "length_cm": 65.0,
+        "category": "hoodie",
+        "brand": "SportZone"
+    },
+    {
+        "sku": "HOD-002",
+        "size_label": "L",
+        "shoulder_cm": 47.0,
+        "chest_cm": 58.0,
+        "length_cm": 67.0,
+        "category": "hoodie",
+        "brand": "SportZone"
+    },
+    {
+        "sku": "HOD-002",
+        "size_label": "XL",
+        "shoulder_cm": 49.0,
+        "chest_cm": 62.0,
+        "length_cm": 69.0,
+        "category": "hoodie",
+        "brand": "SportZone"
+    },
+    {
+        "sku": "PLO-001",
+        "size_label": "S",
+        "shoulder_cm": 41.5,
+        "chest_cm": 46.0,
+        "length_cm": 63.0,
+        "category": "polo",
+        "brand": "FormalEdge"
+    },
+    {
+        "sku": "PLO-001",
+        "size_label": "M",
+        "shoulder_cm": 43.5,
+        "chest_cm": 50.0,
+        "length_cm": 65.0,
+        "category": "polo",
+        "brand": "FormalEdge"
+    },
+    {
+        "sku": "PLO-001",
+        "size_label": "L",
+        "shoulder_cm": 45.5,
+        "chest_cm": 54.0,
+        "length_cm": 67.0,
+        "category": "polo",
+        "brand": "FormalEdge"
+    },
+    {
+        "sku": "PLO-001",
+        "size_label": "XL",
+        "shoulder_cm": 47.5,
+        "chest_cm": 58.0,
+        "length_cm": 69.0,
+        "category": "polo",
+        "brand": "FormalEdge"
+    },
+    {
+        "sku": "PLO-002",
+        "size_label": "S",
+        "shoulder_cm": 42.0,
+        "chest_cm": 47.0,
+        "length_cm": 62.0,
+        "category": "polo",
+        "brand": "CasualVibes"
+    },
+    {
+        "sku": "PLO-002",
+        "size_label": "M",
+        "shoulder_cm": 44.0,
+        "chest_cm": 51.0,
+        "length_cm": 64.0,
+        "category": "polo",
+        "brand": "CasualVibes"
+    },
+    {
+        "sku": "PLO-002",
+        "size_label": "L",
+        "shoulder_cm": 46.0,
+        "chest_cm": 55.0,
+        "length_cm": 66.0,
+        "category": "polo",
+        "brand": "CasualVibes"
+    },
+    {
+        "sku": "PLO-002",
+        "size_label": "XL",
+        "shoulder_cm": 48.0,
+        "chest_cm": 59.0,
+        "length_cm": 68.0,
+        "category": "polo",
+        "brand": "CasualVibes"
+    },
+    {
+        "sku": "SWT-001",
+        "size_label": "S",
+        "shoulder_cm": 43.0,
+        "chest_cm": 49.0,
+        "length_cm": 64.0,
+        "category": "sweater",
+        "brand": "WinterWear"
+    },
+    {
+        "sku": "SWT-001",
+        "size_label": "M",
+        "shoulder_cm": 45.0,
+        "chest_cm": 53.0,
+        "length_cm": 66.0,
+        "category": "sweater",
+        "brand": "WinterWear"
+    },
+    {
+        "sku": "SWT-001",
+        "size_label": "L",
+        "shoulder_cm": 47.0,
+        "chest_cm": 57.0,
+        "length_cm": 68.0,
+        "category": "sweater",
+        "brand": "WinterWear"
+    },
+    {
+        "sku": "SWT-001",
+        "size_label": "XL",
+        "shoulder_cm": 49.0,
+        "chest_cm": 61.0,
+        "length_cm": 70.0,
+        "category": "sweater",
+        "brand": "WinterWear"
+    },
+    {
+        "sku": "SWT-002",
+        "size_label": "S",
+        "shoulder_cm": 42.0,
+        "chest_cm": 48.0,
+        "length_cm": 63.0,
+        "category": "sweater",
+        "brand": "UrbanFit"
+    },
+    {
+        "sku": "SWT-002",
+        "size_label": "M",
+        "shoulder_cm": 44.0,
+        "chest_cm": 52.0,
+        "length_cm": 65.0,
+        "category": "sweater",
+        "brand": "UrbanFit"
+    },
+    {
+        "sku": "SWT-002",
+        "size_label": "L",
+        "shoulder_cm": 46.0,
+        "chest_cm": 56.0,
+        "length_cm": 67.0,
+        "category": "sweater",
+        "brand": "UrbanFit"
+    },
+    {
+        "sku": "SWT-002",
+        "size_label": "XL",
+        "shoulder_cm": 48.0,
+        "chest_cm": 60.0,
+        "length_cm": 69.0,
+        "category": "sweater",
+        "brand": "UrbanFit"
+    }
+]

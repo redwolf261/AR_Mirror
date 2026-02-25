@@ -1,0 +1,93 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.log
+
+# Virtual Environment
+venv/
+ENV/
+env/
+ar/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test and validation data
+validation_data/
+logs/
+
+# Large dataset files
+dataset/
+*.task
+ab_test_results/
+VITON-HD/
+
+# CP-VTON large binaries (checkpoints downloaded separately)
+cp-vton/checkpoints/
+cp-vton/__pycache__/
+
+# Model files
+*.task
+models/*.pth
+models/*.onnx
+models/*.pt
+models/*.pkl
+smpl_models/
+h3.6m/
+python-ml/src/.gradio/
+
+# Virtual environments (all variants)
+.venv/
+python_env/
+
+# Large data / generated output
+data/synthetic_pure/
+data/diffusion_cache/
+data/test_results/
+data/logs/
+output/
+garment_samples/
+
+# Environment variables
+.env
+.env.local
+
+# FitEngine — generated artefacts
+python-ml/src/fitengine/checkpoints/
+python-ml/src/fitengine/exports/
+python-ml/src/data/
+~/.fitengine/

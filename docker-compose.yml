@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  # Python ML Service
+  ml-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.python-ml
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./python-ml/models:/app/models
+      - ./python-ml/data:/app/data
+      - ./python-ml/logs:/app/logs
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - DATABASE_URL=postgresql://postgres:secret@postgres:5432/chic_india
+    depends_on:
+      - postgres
+    networks:
+      - chic-india-net
+
+  # NestJS Backend API
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:secret@postgres:5432/chic_india?schema=public
+      - ML_SERVICE_URL=http://ml-service:8000
+    depends_on:
+      - postgres
+      - ml-service
+    networks:
+      - chic-india-net
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=secret
+      - POSTGRES_DB=chic_india
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - chic-india-net
+
+networks:
+  chic-india-net:
+    driver: bridge
+
+volumes:
+  postgres_data:

@@ -1,0 +1,29 @@
+{
+  "reportMissingImports": false,
+  "reportMissingTypeStubs": false,
+  "reportUnknownParameterType": false,
+  "reportUnknownArgumentType": false,
+  "reportUnknownLambdaType": false,
+  "reportUnknownVariableType": false,
+  "reportUnknownMemberType": false,
+  "reportMissingTypeArgument": false,
+  "reportUnnecessaryIsInstance": false,
+  "reportUnnecessaryTypeIgnoreComment": false,
+  "reportOptionalMemberAccess": false,
+  "reportOptionalCall": false,
+  "reportOptionalSubscript": false,
+  "reportOptionalOperand": false,
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic",
+  "extraPaths": ["vendor"],
+  "exclude": [
+    "**/.venv/**",
+    "**/ar/**",
+    "**/cp-vton/**",
+    "**/tests/**",
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/scripts/utilities/diffusion_vton.py",
+    "**/blender_addon/**"
+  ]
+}
