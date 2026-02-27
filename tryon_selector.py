@@ -15,6 +15,8 @@ Controls
 
 import cv2
 import numpy as np
+from web_server import WebServer, get_param as _wp
+from auto_calibrator import AutoCalibrator
 from pathlib import Path
 import sys
 import logging
@@ -25,7 +27,7 @@ import urllib.error
 from collections import deque
 import time
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+logging.basicConfig(level=logging.DEBUG, format="%(message)s")
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -69,6 +71,97 @@ def _on_mouse(event, x, y, flags, _param):
     elif event == cv2.EVENT_MOUSEWHEEL:
         # flags > 0 → scroll up (negative delta), flags < 0 → scroll down
         _mouse["scroll"] += -1 if flags > 0 else 1
+
+
+# ---------------------------------------------------------------------------
+# Skeleton / landmark overlay  (toggle with K key)
+# ---------------------------------------------------------------------------
+# MediaPipe pose landmark indices used for the garment anchor skeleton
+_SKEL_JOINTS = {
+    0:  ("nose",     (255, 255, 255)),
+    11: ("L.shldr",  (0, 220, 255)),
+    12: ("R.shldr",  (0, 220, 255)),
+    13: ("L.elbow",  (80, 180, 255)),
+    14: ("R.elbow",  (80, 180, 255)),
+    15: ("L.wrist",  (140, 140, 255)),
+    16: ("R.wrist",  (140, 140, 255)),
+    23: ("L.hip",    (0, 255, 120)),
+    24: ("R.hip",    (0, 255, 120)),
+}
+_SKEL_BONES = [
+    (11, 12, (0, 220, 255)),    # shoulder bar
+    (23, 24, (0, 255, 120)),    # hip bar
+    (11, 23, (0, 255, 60)),     # left side torso
+    (12, 24, (0, 255, 60)),     # right side torso
+    (11, 13, (80, 200, 255)),   # left upper arm
+    (12, 14, (80, 200, 255)),   # right upper arm
+    (13, 15, (140, 160, 255)),  # left forearm
+    (14, 16, (140, 160, 255)),  # right forearm
+    (0,  11, (200, 200, 200)),  # neck left
+    (0,  12, (200, 200, 200)),  # neck right
+]
+
+
+def draw_skeleton_overlay(frame: np.ndarray, meas: dict) -> None:
+    """
+    Draw pose skeleton + garment anchor points directly on *frame* (in-place).
+    Shows exactly where the torso box and shoulder/hip joints sit.
+    """
+    if meas is None:
+        return
+    landmarks = meas.get('landmarks')
+    torso_box = meas.get('torso_box')
+    h, w = frame.shape[:2]
+
+    # --- Draw torso anchor box (where garment is placed) ---
+    if torso_box is not None:
+        tx1, ty1, tx2, ty2 = torso_box
+        cv2.rectangle(frame, (tx1, ty1), (tx2, ty2), (0, 180, 255), 2)
+        cv2.putText(frame, "GARMENT BOX", (tx1 + 4, ty1 - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 180, 255), 1, cv2.LINE_AA)
+
+    if landmarks is None:
+        return
+
+    # Convert normalised coords → pixel coords
+    pts = {}
+    for idx, (label, col) in _SKEL_JOINTS.items():
+        if idx >= len(landmarks):
+            continue
+        lm = landmarks[idx]
+        vis = getattr(lm, 'visibility', 1.0)
+        if vis < 0.25:
+            continue
+        px, py = int(lm.x * w), int(lm.y * h)
+        pts[idx] = (px, py, col, label)
+
+    # --- Draw bones ---
+    for i, j, col in _SKEL_BONES:
+        if i in pts and j in pts:
+            cv2.line(frame, pts[i][:2], pts[j][:2], col, 2, cv2.LINE_AA)
+
+    # --- Draw joint dots + labels ---
+    for idx, (px, py, col, label) in pts.items():
+        cv2.circle(frame, (px, py), 7, col, -1, cv2.LINE_AA)
+        cv2.circle(frame, (px, py), 7, (0, 0, 0), 1, cv2.LINE_AA)   # black border
+        # Label only the anchor joints to avoid clutter
+        if idx in (11, 12, 23, 24):
+            cv2.putText(frame, label, (px + 9, py + 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, col, 1, cv2.LINE_AA)
+
+    # --- Midpoint markers: collar centre & waist centre ---
+    if 11 in pts and 12 in pts:
+        mx = (pts[11][0] + pts[12][0]) // 2
+        my = (pts[11][1] + pts[12][1]) // 2
+        cv2.drawMarker(frame, (mx, my), (0, 255, 255), cv2.MARKER_CROSS, 18, 2)
+        cv2.putText(frame, "collar", (mx + 6, my - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 255), 1, cv2.LINE_AA)
+    if 23 in pts and 24 in pts:
+        mx = (pts[23][0] + pts[24][0]) // 2
+        my = (pts[23][1] + pts[24][1]) // 2
+        cv2.drawMarker(frame, (mx, my), (0, 255, 120), cv2.MARKER_CROSS, 18, 2)
+        cv2.putText(frame, "waist", (mx + 6, my - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 120), 1, cv2.LINE_AA)
 
 
 # ---------------------------------------------------------------------------
@@ -411,10 +504,12 @@ class GarmentRenderer:
         self._cache: dict  = {}
         self._fitter       = None   # BodyAwareGarmentFitter
         self._pipeline     = None   # Phase2NeuralPipeline
-        self._last_meas    = None   # cached body measurements
+        self._last_meas    = None   # cached raw body measurements
+        self._last_used_meas = None  # improved measurements (corrected torso_box)
         self._meas_age     = 0
         self._MEAS_TTL     = 5      # re-detect every 5 frames
         self._dbg_count    = 0      # controls diagnostic print rate
+        self._last_loaded_garment = None  # track garment changes for TOM pre-warming
         self._init_fitter()
         self._init_pipeline()
         # Phase 3: per-joint landmark smoother (velocity-adaptive EMA)
@@ -536,7 +631,7 @@ class GarmentRenderer:
             from src.pipelines.phase2_neural_pipeline import Phase2NeuralPipeline
             self._pipeline = Phase2NeuralPipeline(
                 device='auto',
-                enable_tom=False,        # TOM synthesis is slow; GMM alone is enough
+                enable_tom=True,         # CP-VTON TOM: full person reconstruction
                 batch_size=1,
                 enable_optimizations=True,
             )
@@ -579,11 +674,28 @@ class GarmentRenderer:
         }
 
     # ---- tier-3 fallback ----
-    def _fixed_blend(self, frame, cloth_rgb, mask):
-        h, w  = frame.shape[:2]
-        x1, x2 = int(w * FIX_X1), int(w * FIX_X2)
-        y1, y2 = int(h * FIX_Y1), int(h * FIX_Y2)
-        bw, bh = x2 - x1, y2 - y1
+    def _fixed_blend(self, frame, cloth_rgb, mask, measurements=None):
+        h, w = frame.shape[:2]
+        # Use landmark-based torso box if available, else fixed fractions
+        if measurements is not None:
+            tb  = measurements.get('torso_box')
+            lms = measurements.get('landmarks')
+            if tb is not None:
+                x1, y1, x2, y2 = tb
+            elif lms is not None and len(lms) > 24:
+                x1 = int(min(lms[11].x, lms[23].x) * w)
+                x2 = int(max(lms[12].x, lms[24].x) * w)
+                y1 = int(min(lms[11].y, lms[12].y) * h)
+                y2 = int((lms[23].y + lms[24].y) / 2 * h)
+            else:
+                x1, x2 = int(w * FIX_X1), int(w * FIX_X2)
+                y1, y2 = int(h * FIX_Y1), int(h * FIX_Y2)
+        else:
+            x1, x2 = int(w * FIX_X1), int(w * FIX_X2)
+            y1, y2 = int(h * FIX_Y1), int(h * FIX_Y2)
+        x1 = max(0, x1); y1 = max(0, y1)
+        x2 = min(w, x2); y2 = min(h, y2)
+        bw, bh = max(1, x2 - x1), max(1, y2 - y1)
         c = cv2.resize(cloth_rgb, (bw, bh), interpolation=cv2.INTER_LINEAR)
         m = cv2.resize(mask.squeeze(), (bw, bh), interpolation=cv2.INTER_LINEAR)
         m = m[:, :, np.newaxis]
@@ -601,6 +713,13 @@ class GarmentRenderer:
         cloth_rgb, mask = self._load(filename)
         if cloth_rgb is None:
             return frame
+
+        # ── TOM Pre-warming: eliminate cold-start distortion ────────────
+        # When garment changes, pre-warm TOM cache so first frame shows TOM quality
+        # instead of distorted GMM fallback
+        if filename != self._last_loaded_garment and self._pipeline is not None:
+            self._pipeline.prewarm_tom_cache(cloth_rgb, mask.squeeze())
+            self._last_loaded_garment = filename
 
         # ── Get body measurements (shared by tier-1 and tier-2) ─────────
         measurements = None
@@ -639,11 +758,33 @@ class GarmentRenderer:
                     by1, by2 = int(ys.min()), int(ys.max())
                     bh_px    = by2 - by1
 
-                    # MediaPipe segmentation starts BELOW the shoulder line.
-                    # Shirt top (collar) is ~40% of the mask height ABOVE by1.
-                    # Shirt covers down to about by2 (waist).
-                    shirt_top    = max(0, by1 - int(bh_px * 0.45))
+                    # ── Anchor shirt_top to shoulder landmarks, NOT head top ──
+                    # by1 is the top of the segmentation mask which includes the
+                    # head, placing the garment over the face.  Use the actual
+                    # shoulder landmark Y so the collar sits at shoulder level.
+                    lms = measurements.get('landmarks')
+                    if lms is not None and len(lms) > 12:
+                        sh_y_left  = lms[11].y * h_fr
+                        sh_y_right = lms[12].y * h_fr
+                        sh_y = min(sh_y_left, sh_y_right)
+                        offset_px = int(_wp('shoulder_y_offset_px') or 8)
+                        shirt_top = max(0, int(sh_y) - offset_px)
+                        # Also derive x-bounds from shoulder + hip landmarks for accuracy
+                        if len(lms) > 24:
+                            lx = int(min(lms[11].x, lms[23].x) * w_fr)
+                            rx = int(max(lms[12].x, lms[24].x) * w_fr)
+                            if rx > lx + 20:  # sanity check
+                                bx1, bx2 = lx, rx
+                    else:
+                        shirt_top = max(0, by1 - int(bh_px * 0.08))
+
                     shirt_bottom = by2
+
+                    # Widen x-extent — fraction read live from web_server
+                    pad_pct = float(_wp('torso_x_pad_pct') or 0.25)
+                    pad_x = int((bx2 - bx1) * pad_pct)
+                    bx1   = max(0, bx1 - pad_x)
+                    bx2   = min(w_fr, bx2 + pad_x)
                     measurements = dict(measurements)   # don't mutate cached copy
                     measurements['torso_box'] = (bx1, shirt_top, bx2, shirt_bottom)
                     if self._dbg_count % 30 == 1:
@@ -660,6 +801,9 @@ class GarmentRenderer:
                 if box_w < w_fr * 0.10 or ty1 > h_fr * 0.70:
                     log.debug(f"Torso box rejected ({box_w}px wide, ty1={ty1}) — fixed fallback")
                     measurements = None
+
+        # Store improved measurements for auto-calibrator (corrected torso_box)
+        self._last_used_meas = measurements
 
         # ── Tier 1: Neural GMM warping ───────────────────────────────────
         if self._pipeline is not None and measurements is not None:
@@ -708,14 +852,50 @@ class GarmentRenderer:
                 log.debug(f"Geometric fitter error: {e}")
 
         # ── Tier 3: Fixed-region fallback ────────────────────────────────
-        return self._fixed_blend(frame, cloth_rgb, mask)
+        return self._fixed_blend(frame, cloth_rgb, mask, measurements)
 
     def _place_warped(self, frame, result, measurements) -> np.ndarray:
         """Composite neural-warped garment onto the frame at the torso box."""
         h, w = frame.shape[:2]
-        torso_x1, torso_y1, torso_x2, torso_y2 = measurements['torso_box']
         body_mask = measurements.get('body_mask')
 
+        # ── TOM full-synthesis branch ─────────────────────────────────────
+        # When the async TOM thread has produced a synthesized frame:
+        #   result.synthesized is (256, 192, 3) float32 [0,1] RGB
+        #   It is the *full person* reconstructed with the garment applied.
+        # Composite: TOM inside body silhouette, camera frame as background.
+        if result.synthesized is not None:
+            log.debug(f"[Render] Using TOM synthesis output (shape: {result.synthesized.shape})")
+            # Scale TOM output back to camera resolution
+            synth_bgr = cv2.cvtColor(result.synthesized, cv2.COLOR_RGB2BGR)
+            synth_u8  = np.clip(synth_bgr * 255, 0, 255).astype(np.uint8)
+            synth_full = cv2.resize(synth_u8, (w, h), interpolation=cv2.INTER_LINEAR)
+
+            if body_mask is not None:
+                # Resize body mask to frame size
+                bm = body_mask.astype(np.float32)
+                if bm.shape[:2] != (h, w):
+                    bm = cv2.resize(bm, (w, h), interpolation=cv2.INTER_LINEAR)
+                bm = bm.squeeze()
+                # Dilate: let clothing slightly overflow body boundary
+                dil_px = int(_wp('mask_dilation_px') or 31)
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dil_px, dil_px))
+                bm = cv2.dilate(bm, kernel, iterations=1)
+                # Soft feathered edge (sigma ≈ dil_px / 2)
+                sigma = max(3, dil_px // 2) | 1   # must be odd
+                bm_soft = cv2.GaussianBlur(bm, (sigma * 4 + 1, sigma * 4 + 1), sigma)
+                bm_soft = np.clip(bm_soft, 0.0, 1.0)[:, :, np.newaxis]   # (H,W,1)
+                # Blend
+                out_f = (synth_full.astype(np.float32) * bm_soft +
+                         frame.astype(np.float32) * (1.0 - bm_soft))
+                return np.clip(out_f, 0, 255).astype(np.uint8)
+            else:
+                # No body mask: return TOM output directly (full frame)
+                return synth_full
+
+        # ── Fallback: manual GMM overlay (while TOM warms up) ────────────
+        log.warning("[Render] Using GMM fallback overlay (TOM cache not ready yet)")
+        torso_x1, torso_y1, torso_x2, torso_y2 = measurements['torso_box']
         # Fully normalise the torso box before any arithmetic
         if torso_x2 < torso_x1: torso_x1, torso_x2 = torso_x2, torso_x1
         if torso_y2 < torso_y1: torso_y1, torso_y2 = torso_y2, torso_y1
@@ -727,10 +907,15 @@ class GarmentRenderer:
         raw_box_w = torso_x2 - torso_x1
         raw_box_h = torso_y2 - torso_y1
 
-        # Garment must be at LEAST 35 % of frame width so it covers the torso
-        # even when the landmark detector returns a too-narrow box
-        target_w = max(int(w * 0.35), int(raw_box_w * 1.15))
-        target_h = max(2, int(raw_box_h * 1.20))
+        # Garment must be at LEAST target_w_min_pct of frame width
+        tw_min_pct = float(_wp('target_w_min_pct') or 0.55)
+        tw_scale   = float(_wp('target_w_scale')   or 1.30)
+        th_scale   = float(_wp('target_h_scale')   or 1.10)
+        dil_px     = int(_wp('mask_dilation_px')   or 31)
+        blend_body = float(_wp('mask_blend_body')  or 0.70)
+
+        target_w = max(int(w * tw_min_pct), int(raw_box_w * tw_scale))
+        target_h = max(2, int(raw_box_h * th_scale))
 
         wc = cv2.resize(result.warped_cloth, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
         wm = cv2.resize(result.warped_mask,  (target_w, target_h), interpolation=cv2.INTER_LINEAR)
@@ -751,19 +936,23 @@ class GarmentRenderer:
         wc = wc[:ah, :aw]
         wm = wm[:ah, :aw]
 
-        # Optionally restrict to body silhouette
+        # Softly restrict to body silhouette: dilate the mask so garment edges
+        # don't get hard-clipped when segmentation underestimates the body width.
         if body_mask is not None:
-            # Ensure mask matches frame dimensions before slicing
             if body_mask.shape[:2] != (h, w):
                 body_mask = cv2.resize(
                     body_mask.astype(np.float32), (w, h),
                     interpolation=cv2.INTER_NEAREST
                 )
-            bm2d  = body_mask.squeeze()               # (H,W,1) → (H,W)
-            bm_roi = bm2d[gy1:gy2, gx1:gx2].astype(np.float32)
+            bm2d  = body_mask.squeeze().astype(np.float32)
+            # Dilate body mask — amount read live from web_server
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dil_px, dil_px))
+            bm2d   = cv2.dilate(bm2d, kernel, iterations=1)
+            bm_roi = bm2d[gy1:gy2, gx1:gx2]
             if bm_roi.ndim == 2:
                 bm_roi = bm_roi[:, :, np.newaxis]
-            wm = wm * bm_roi
+            # Blend body-masked + free — amount read live from web_server
+            wm = wm * (bm_roi * blend_body + (1.0 - blend_body))
 
         out = frame.copy()
         roi = out[gy1:gy2, gx1:gx2].astype(np.float32) / 255.0
@@ -787,10 +976,27 @@ def main():
         log.error("Ensure CP-VTON dataset is at  dataset/train/cloth/")
         sys.exit(1)
 
-    panel      = GarmentPanel()
-    renderer   = GarmentRenderer()
-    sku_logger = SKUSessionLogger()
-    prev_sel   = None
+    panel         = GarmentPanel()
+    renderer      = GarmentRenderer()
+    sku_logger    = SKUSessionLogger()
+    calibrator    = AutoCalibrator(enabled=True)
+    prev_sel      = None
+    show_skeleton = False   # toggle with K
+
+    # ── Web debug server (http://localhost:5050) ──────────────────
+    web = WebServer(port=5050)
+    web.register_garment_list(lambda: panel.filenames)
+    def _web_garment_cb(name: str):
+        idx = panel.filenames.index(name) if name in panel.filenames else -1
+        if idx >= 0:
+            panel._idx = idx
+    web.register_garment_callback(_web_garment_cb)
+    def _web_param_cb(updates):
+        nonlocal show_skeleton
+        if "show_skeleton" in updates:
+            show_skeleton = bool(updates["show_skeleton"])
+    web.register_param_callback(_web_param_cb)
+    web.start()
 
     if not panel.filenames:
         log.error("No garment images found in dataset/train/cloth/")
@@ -846,6 +1052,7 @@ def main():
 
         # Phase 5: update style advice + SKU logger when garment changes
         if sel != prev_sel:
+            calibrator.reset(f"garment → {sel}")
             body_shape = "UNKNOWN"
             if renderer._style_recommender is not None and renderer._last_meas is not None:
                 renderer.refresh_style_advice(renderer._last_meas)
@@ -856,25 +1063,9 @@ def main():
             try_upload_measurement(renderer._last_meas, sel or "", body_shape)
             prev_sel = sel
 
-        # ── DEBUG: draw body segmentation bounding box ──────────
-        if renderer._last_meas is not None:
-            bm = renderer._last_meas.get('body_mask')
-            if bm is not None and bm.any():
-                h_fr, w_fr = frame.shape[:2]
-                if bm.shape[:2] != (h_fr, w_fr):
-                    bm = cv2.resize(bm.astype(np.float32), (w_fr, h_fr),
-                                    interpolation=cv2.INTER_NEAREST)
-                    bm = (bm > 0.5).astype(np.uint8)
-                bm2d = bm.squeeze()                   # (H,W,1) → (H,W)
-                ys, xs = np.where(bm2d > 0)
-                if len(ys) > 100:
-                    bx1, bx2 = int(xs.min()), int(xs.max())
-                    by1, by2 = int(ys.min()), int(ys.max())
-                    shirt_top = max(0, by1 - int((by2 - by1) * 0.45))
-                    cv2.rectangle(frame, (bx1, shirt_top), (bx2, by2), (0, 255, 0), 2)
-                    cv2.putText(frame, f"SEG y={shirt_top}-{by2}",
-                                (bx1, max(0, shirt_top - 6)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
+        # ── Skeleton / landmark overlay (press K to toggle) ──────
+        if show_skeleton and renderer._last_meas is not None:
+            draw_skeleton_overlay(frame, renderer._last_meas)
 
         # ── FPS + garment label on left panel ────────────────
         dt = time.perf_counter() - t0
@@ -887,16 +1078,37 @@ def main():
         layer_badge = f"  +{len(renderer._extra_layers)} layer(s)" if renderer._extra_layers else ""
         cv2.putText(frame, f"Wearing: {sel or 'none'}{layer_badge}", (12, 56),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 210, 255), 1, cv2.LINE_AA)
+        skel_hint = "[K=skeleton ON] " if show_skeleton else ""
         cv2.putText(frame,
-                    "Click/W-S-A-D=select  |  L=add layer  U=clear layers  |  Q=quit",
+                    f"{skel_hint}W-S-A-D=select  L=layer  U=clear  K=skeleton  Q=quit",
                     (10, CAM_H - 12),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (160, 160, 160), 1, cv2.LINE_AA)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, (160, 160, 160), 1, cv2.LINE_AA)
 
         # Phase 5A: style advice HUD (above measurements)
         draw_style_advice_hud(frame, renderer._style_advice)
 
         # Phase 4B: Measurements HUD (bottom-right corner)
         draw_measurements_hud(frame, renderer._last_meas)
+
+        # ── Auto-calibrator tick (uses improved measurements with corrected torso_box) ──
+        calibrator.tick(renderer._last_used_meas, frame)
+        q = calibrator.quality
+        if q:
+            score  = q.get("total", 0)
+            smooth = calibrator.smooth_total
+            locked = calibrator._locked
+            # Animated progress bar at bottom of frame
+            bar_w  = int(CAM_W * smooth)
+            bar_col = (0, 230, 100) if locked else (0, 180, 255)
+            cv2.rectangle(frame, (0, CAM_H - 6), (bar_w, CAM_H), bar_col, -1)
+            status = "PERFECT FIT" if locked else f"Perfecting fit… {int(smooth*100)}%"
+            col_txt = (0, 230, 100) if locked else (0, 180, 255)
+            cv2.putText(frame, status, (12, CAM_H - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, col_txt, 1, cv2.LINE_AA)
+
+        # ── Push to web debug server ──────────────────────────
+        web.push_frame(frame)
+        web.push_state(fps, sel or "", renderer._last_meas)
 
         # ── Compose full window ───────────────────────────────
         right = panel.render()
@@ -924,6 +1136,9 @@ def main():
         elif key == ord('u'):               # U  — clear all extra layers
             renderer._extra_layers.clear()
             log.info("All extra layers cleared")
+        elif key == ord('k'):               # K  — toggle skeleton overlay
+            show_skeleton = not show_skeleton
+            log.info(f"Skeleton overlay: {'ON' if show_skeleton else 'OFF'}")
 
     sku_logger.flush()
     cap.release()
