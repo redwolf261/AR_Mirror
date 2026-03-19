@@ -64,7 +64,7 @@ class GarmentMesh:
         h, w = garment_image.shape[:2]
         
         # Create vertex grid
-        grid_size = 32  # Lower resolution for speed
+        grid_size = 64  # Higher resolution for smoother surface conformance
         x = np.linspace(0, w, grid_size)
         y = np.linspace(0, h, grid_size)
         xx, yy = np.meshgrid(x, y)
@@ -123,6 +123,36 @@ class MeshGarmentWrapper:
             device: 'cuda' or 'cpu' for computation
         """
         self.device = device
+
+        # ── SMPL vertex segmentation (Phase B) ─────────────────────────────
+        # Load the anatomical vertex-to-part mapping from JSON if available.
+        # Falls back gracefully to the legacy index-slice approach.
+        self._vert_segs: dict = {}
+        _seg_path = (
+            __import__('pathlib').Path(__file__).resolve().parents[2]
+            / 'models' / 'smpl_vert_segmentation.json'
+        )
+        if _seg_path.exists():
+            try:
+                import json
+                with open(_seg_path) as _fp:
+                    _raw = json.load(_fp)  # {part_name: [vert_idx, ...]}
+                self._vert_segs = {k: set(v) for k, v in _raw.items()}
+                logger.info(
+                    "MeshGarmentWrapper: loaded SMPL vert-seg (%d parts).",
+                    len(self._vert_segs)
+                )
+            except Exception as _e:
+                logger.warning(
+                    "MeshGarmentWrapper: could not parse %s (%s); "
+                    "falling back to index slices.", _seg_path.name, _e
+                )
+        else:
+            logger.info(
+                "MeshGarmentWrapper: %s not found; using index-slice fallback.",
+                _seg_path.name
+            )
+
         logger.info("MeshGarmentWrapper initialized")
     
     def wrap_garment(
@@ -186,19 +216,50 @@ class MeshGarmentWrapper:
         vertices = body_mesh.vertices
         faces = body_mesh.faces
         
-        # Define vertex ranges (approximate from SMPL topology)
-        region_map = {
-            'tshirt': (1000, 2500),   # Upper torso
-            'dress': (1000, 4500),     # Torso + upper legs
-            'pants': (3000, 5500),     # Lower body
-            'jacket': (1000, 3000),    # Full torso
+        # ── Semantic vertex selection (Phase B) ───────────────────────────
+        # Garment-type → SMPL body-part names that should be included.
+        # These names match keys in smpl_vert_segmentation.json.
+        _garment_parts: dict = {
+            'tshirt':  ['spine', 'spine1', 'spine2', 'leftShoulder', 'rightShoulder',
+                        'leftArm', 'rightArm', 'leftForeArm', 'rightForeArm',
+                        'neck'],
+            'dress':   ['spine', 'spine1', 'spine2', 'leftShoulder', 'rightShoulder',
+                        'leftArm', 'rightArm', 'neck',
+                        'hips', 'leftUpLeg', 'rightUpLeg',
+                        'leftLeg', 'rightLeg'],
+            'pants':   ['hips', 'leftUpLeg', 'rightUpLeg',
+                        'leftLeg', 'rightLeg', 'leftFoot', 'rightFoot'],
+            'jacket':  ['spine', 'spine1', 'spine2', 'leftShoulder', 'rightShoulder',
+                        'leftArm', 'rightArm', 'leftForeArm', 'rightForeArm',
+                        'neck', 'hips'],
         }
-        
-        start_idx, end_idx = region_map.get(garment_type, (1000, 3000))
-        
-        # Extract region vertices
+        parts = _garment_parts.get(garment_type, _garment_parts['tshirt'])
+
+        # Index-slice fallback (pre-Phase-B behaviour)
+        _fallback_slice: dict = {
+            'tshirt':  (1000, 2500),
+            'dress':   (1000, 4500),
+            'pants':   (3000, 5500),
+            'jacket':  (1000, 3000),
+        }
+
+        if self._vert_segs:
+            # Build vertex index array from the union of requested parts
+            import numpy as _np
+            idx_set: set = set()
+            for part in parts:
+                idx_set |= self._vert_segs.get(part, set())
+            if idx_set:
+                idx_arr = _np.array(sorted(idx_set), dtype=_np.int64)
+                # Clamp to actual mesh size
+                idx_arr = idx_arr[idx_arr < len(vertices)]
+                region_vertices = vertices[idx_arr]
+                return region_vertices, faces
+            # Fall through if no indices found
+
+        # ── Legacy index-slice fallback ──────────────────────────────────
+        start_idx, end_idx = _fallback_slice.get(garment_type, (1000, 3000))
         region_vertices = vertices[start_idx:end_idx]
-        
         return region_vertices, faces
     
     def _project_to_surface(
@@ -218,13 +279,26 @@ class MeshGarmentWrapper:
         body_v = torch.from_numpy(body_vertices.astype(np.float32)).to(self.device)
         body_n = torch.from_numpy(body_normals.astype(np.float32)).to(self.device)
         
-        # Fast nearest-neighbour via cdist + argmin
-        dists = torch.cdist(garment_v, body_v)  # (Ng, Nb)
-        closest_idx = dists.argmin(dim=1)        # (Ng,)
-        
-        # Project onto surface (offset along normal prevents z-fighting)
+        # Barycentric-weighted projection via 3 nearest body vertices.
+        # Eliminates the stepping artefacts of pure nearest-neighbour by
+        # smoothly blending position and normal across adjacent body verts.
+        dists = torch.cdist(garment_v, body_v)                          # (Ng, Nb)
+        topk_dists, topk_idx = torch.topk(dists, k=3, dim=1, largest=False)  # (Ng, 3)
+
+        # Inverse-distance weights (stabilised against zero)
+        inv_d = 1.0 / (topk_dists + 1e-6)                              # (Ng, 3)
+        w = inv_d / inv_d.sum(dim=1, keepdim=True)                      # (Ng, 3) normalised
+
+        # Gather and interpolate positions + normals
+        near_pos = body_v[topk_idx]                                     # (Ng, 3, 3)
+        near_nrm = body_n[topk_idx]                                     # (Ng, 3, 3)
+        interp_pos = (w.unsqueeze(-1) * near_pos).sum(dim=1)           # (Ng, 3)
+        interp_nrm = (w.unsqueeze(-1) * near_nrm).sum(dim=1)           # (Ng, 3)
+        interp_nrm = interp_nrm / (interp_nrm.norm(dim=1, keepdim=True) + 1e-8)
+
+        # Offset along interpolated surface normal to prevent z-fighting
         epsilon = 0.02
-        wrapped_v = body_v[closest_idx] + epsilon * body_n[closest_idx]
+        wrapped_v = interp_pos + epsilon * interp_nrm
         
         return wrapped_v.cpu().numpy()
     
@@ -363,7 +437,7 @@ class PhysicsSimulator:
     Performance target: 60 FPS on RTX 2050
     """
     
-    def __init__(self, device: str = 'cuda', grid_size: int = 32):
+    def __init__(self, device: str = 'cuda', grid_size: int = 64):
         """
         Initialize physics simulator.
         

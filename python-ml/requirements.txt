@@ -1,16 +1,17 @@
 # Core ML Dependencies
-opencv-python>=4.8.0
-mediapipe>=0.10.30
-numpy>=1.24.0
+# Keep these ranges compatible with root requirements.txt so a single env can run both runtime + python-ml.
+opencv-python>=4.10.0,<4.14
+mediapipe>=0.10.14,<0.11
+numpy>=1.26.0,<2.0
 
 # Web Service
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
-requests>=2.31.0
+requests>=2.31.0,<3.0
 
 # Data Processing
-pandas>=2.0.0
-pillow>=10.0.0
+pandas>=2.0.0,<3.0
+pillow>=10.0.0,<13.0
 
 # Async
 aiofiles>=23.0.0
@@ -28,4 +29,4 @@ pyyaml>=6.0.0                # Config loading
 onnx>=1.16.0                 # ONNX export (Phase 3)
 scikit-learn>=1.4.0          # Brand calibration LogisticRegression
 torch>=2.5.1                 # PyTorch (STAR body model, regressor training)
-onnxruntime-gpu>=1.20.1      # ONNX Runtime GPU inference
+onnxruntime-gpu>=1.20.1,<1.25 # ONNX Runtime GPU inference

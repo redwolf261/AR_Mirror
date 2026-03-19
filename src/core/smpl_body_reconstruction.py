@@ -383,13 +383,15 @@ class SMPLBodyReconstructor:
             )
         
         vertices = output.vertices[0].cpu().numpy()  # (6890, 3)
-        faces = self.smpl_model.faces.cpu().numpy()  # (13776, 3)
+        # smplx.SMPL.faces is already a numpy array; guard against both types
+        _faces = self.smpl_model.faces
+        faces = _faces.cpu().numpy() if hasattr(_faces, 'cpu') else np.asarray(_faces, dtype=np.int32)
         
         # Compute normals
         normals = self._compute_normals(vertices, faces)
         
-        # Get UV coordinates (if available)
-        uv_coords = self._get_uv_coordinates()
+        # Compute cylindrical UV coordinates from generated vertices
+        uv_coords = self._get_uv_coordinates(vertices)
         
         return SMPLMeshResult(
             vertices=vertices,
@@ -417,12 +419,37 @@ class SMPLBodyReconstructor:
         normals /= norms + 1e-8
         return normals
     
-    def _get_uv_coordinates(self) -> Optional[np.ndarray]:
-        """Get UV texture coordinates for SMPL mesh."""
-        # SMPL has standard UV mapping
-        # Would load from SMPL model data
-        # For now, return None (will implement when needed for texturing)
-        return None
+    def _get_uv_coordinates(self, vertices: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+        """Compute cylindrical UV texture coordinates for SMPL mesh.
+
+        Uses a spine-centred cylindrical unwrap:
+          u = atan2(x - spine_x, z - spine_z) / (2π) + 0.5   [0, 1] longitude
+          v = 1 - (y - y_min) / (y_max - y_min)               [0, 1] latitude
+
+        This gives a continuous, low-distortion UV map for the torso/limbs
+        without requiring the optional SMPL UV atlas file.
+        """
+        if vertices is None:
+            return None
+
+        verts = vertices.astype(np.float32)  # (6890, 3)
+
+        # Spine anchor: median XZ of all vertices (robust to outliers)
+        spine_x = float(np.median(verts[:, 0]))
+        spine_z = float(np.median(verts[:, 2]))
+
+        # Longitude: angle around the vertical (Y) axis
+        dx = verts[:, 0] - spine_x
+        dz = verts[:, 2] - spine_z
+        u = (np.arctan2(dx, dz) / (2.0 * np.pi) + 0.5)  # [0, 1]
+
+        # Latitude: normalised height
+        y_min = verts[:, 1].min()
+        y_max = verts[:, 1].max()
+        v = 1.0 - (verts[:, 1] - y_min) / (y_max - y_min + 1e-8)  # [0, 1], top=0
+
+        uv = np.stack([u, v], axis=1).astype(np.float32)  # (6890, 2)
+        return uv
 
 
 class LightweightSMPL(nn.Module):

@@ -70,38 +70,96 @@ in vec3 v_normal;
 in vec2 v_uv;
 
 uniform sampler2D u_texture;
-uniform vec3 u_light_dir;
+
+// Key light
+uniform vec3 u_light_dir;    // world-space direction toward the light
 uniform vec3 u_light_color;
+// Fill light (softer, ~40% key intensity, opposite side)
+uniform vec3 u_fill_dir;
+uniform vec3 u_fill_color;
+// Ambient
 uniform vec3 u_ambient;
+// Camera
 uniform vec3 u_camera_pos;
-uniform float u_shininess;
+// PBR material (fabric: roughness 0.1-0.9, metallic always 0.0)
+uniform float u_roughness;
+uniform float u_metallic;
 
 out vec4 frag_color;
 
+const float PI = 3.14159265358979;
+
+// Normal Distribution Function — GGX/Trowbridge-Reitz
+float D_GGX(float NdotH, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float denom = (NdotH * NdotH) * (a2 - 1.0) + 1.0;
+    return a2 / (PI * denom * denom + 1e-7);
+}
+
+// Geometry Function — Smith GGX
+float G_Smith(float NdotV, float NdotL, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    float gv = NdotV / (NdotV * (1.0 - k) + k);
+    float gl = NdotL / (NdotL * (1.0 - k) + k);
+    return gv * gl;
+}
+
+// Fresnel — Schlick approximation
+vec3 F_Schlick(float cos_theta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+// Cook-Torrance BRDF for one light source
+vec3 PBR_direct(vec3 albedo, vec3 N, vec3 V, vec3 L, vec3 light_color,
+                float roughness, float metallic) {
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);  // fabric: always 0.04
+    vec3 H = normalize(V + L);
+
+    float NdotL = max(dot(N, L), 0.0);
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotH = max(dot(N, H), 0.0);
+    float HdotV = max(dot(H, V), 0.0);
+
+    float  D   = D_GGX(NdotH, roughness);
+    float  G   = G_Smith(NdotV, NdotL, roughness);
+    vec3   F   = F_Schlick(HdotV, F0);
+
+    vec3 specular = (D * G * F) / (4.0 * NdotV * NdotL + 1e-7);
+
+    // Energy-conserving diffuse (kD = 0 for metals)
+    vec3 kD = (1.0 - F) * (1.0 - metallic);
+    vec3 diffuse = kD * albedo / PI;
+
+    return (diffuse + specular) * light_color * NdotL;
+}
+
 void main() {
-    // Sample texture
     vec4 tex_color = texture(u_texture, v_uv);
-    
-    // Skip fully transparent pixels
     if (tex_color.a < 0.01) discard;
-    
-    // Normalize interpolated normal
+
+    vec3 albedo = tex_color.rgb;
     vec3 N = normalize(v_normal);
-    vec3 L = normalize(-u_light_dir);
     vec3 V = normalize(u_camera_pos - v_world_pos);
-    vec3 H = normalize(L + V);  // Blinn-Phong half-vector
-    
-    // Diffuse
-    float diff = max(dot(N, L), 0.0);
-    
-    // Specular (Blinn-Phong)
-    float spec = pow(max(dot(N, H), 0.0), u_shininess);
-    
-    // Combine
-    vec3 lighting = u_ambient + u_light_color * diff + vec3(0.3) * spec;
-    vec3 color = tex_color.rgb * lighting;
-    
-    // Clamp and output with alpha
+
+    // Key light contribution
+    vec3 L_key  = normalize(u_light_dir);
+    vec3 Lo = PBR_direct(albedo, N, V, L_key, u_light_color, u_roughness, u_metallic);
+
+    // Fill light contribution
+    vec3 L_fill = normalize(u_fill_dir);
+    Lo += PBR_direct(albedo, N, V, L_fill, u_fill_color, u_roughness, u_metallic);
+
+    // Ambient (IBL approximation: simple hemisphere ambient occlusion)
+    vec3 ambient = u_ambient * albedo;
+
+    vec3 color = ambient + Lo;
+
+    // Reinhard tone-map then gamma-correct
+    color = color / (color + vec3(1.0));
+    color = pow(color, vec3(1.0 / 2.2));
+
     frag_color = vec4(clamp(color, 0.0, 1.0), tex_color.a);
 }
 """
@@ -282,11 +340,16 @@ class GPURenderer:
             )
             self._multisample = False
 
-        # Default lighting
-        self._light_dir = np.array([0.0, -0.5, -1.0], dtype=np.float32)
-        self._light_color = np.array([1.0, 1.0, 1.0], dtype=np.float32)
-        self._ambient = np.array([0.35, 0.35, 0.35], dtype=np.float32)
-        self._shininess = 32.0
+        # Default lighting — key light (front-upper-right)
+        self._light_dir = np.array([0.577, 0.577, 0.577], dtype=np.float32)   # toward light
+        self._light_color = np.array([1.0, 0.98, 0.95], dtype=np.float32)      # warm white
+        # Fill light (front-upper-left, 40% key intensity, cooler)
+        self._fill_dir = np.array([-0.577, 0.408, 0.707], dtype=np.float32)
+        self._fill_color = np.array([0.40, 0.42, 0.46], dtype=np.float32)      # cool blue-white
+        self._ambient = np.array([0.10, 0.10, 0.10], dtype=np.float32)
+        # PBR material defaults (general fabric)
+        self._roughness = 0.75
+        self._metallic = 0.0
 
         # Cache for uploaded textures / VAOs
         self._cached_vao = None
@@ -410,16 +473,38 @@ class GPURenderer:
         light_color: Optional[np.ndarray] = None,
         ambient: Optional[np.ndarray] = None,
         shininess: Optional[float] = None,
+        fill_dir: Optional[np.ndarray] = None,
+        fill_color: Optional[np.ndarray] = None,
     ):
-        """Update lighting parameters."""
+        """Update lighting parameters (key light + optional fill light)."""
         if light_dir is not None:
             self._light_dir = np.asarray(light_dir, dtype=np.float32)
         if light_color is not None:
             self._light_color = np.asarray(light_color, dtype=np.float32)
         if ambient is not None:
             self._ambient = np.asarray(ambient, dtype=np.float32)
-        if shininess is not None:
-            self._shininess = float(shininess)
+        if fill_dir is not None:
+            self._fill_dir = np.asarray(fill_dir, dtype=np.float32)
+        if fill_color is not None:
+            self._fill_color = np.asarray(fill_color, dtype=np.float32)
+        # shininess kept for API compat but ignored by PBR shader
+
+    def set_material(
+        self,
+        roughness: Optional[float] = None,
+        metallic: Optional[float] = None,
+    ):
+        """Set PBR material parameters.
+
+        Args:
+            roughness: 0.0 (mirror-smooth) – 1.0 (fully diffuse).
+                       Typical fabrics: cotton≈0.85, denim≈0.80, silk≈0.25.
+            metallic:  0.0 for all fabrics/garments.
+        """
+        if roughness is not None:
+            self._roughness = float(np.clip(roughness, 0.0, 1.0))
+        if metallic is not None:
+            self._metallic = float(np.clip(metallic, 0.0, 1.0))
 
     @property
     def is_available(self) -> bool:
@@ -590,13 +675,20 @@ class GPURenderer:
             normal_mat = np.linalg.inv(M[:3, :3]).T.astype(np.float32)
             self.prog['u_model'].write(M.T.tobytes())
             self.prog['u_normal_matrix'].write(normal_mat.T.tobytes())
+            # Key light (direction stored as unit vector *toward* the light)
             self.prog['u_light_dir'].write(self._light_dir.tobytes())
             self.prog['u_light_color'].write(self._light_color.tobytes())
+            # Fill light
+            self.prog['u_fill_dir'].write(self._fill_dir.tobytes())
+            self.prog['u_fill_color'].write(self._fill_color.tobytes())
+            # Ambient + camera
             self.prog['u_ambient'].write(self._ambient.tobytes())
             self.prog['u_camera_pos'].write(
                 np.array([0, 0, 5], dtype=np.float32).tobytes()
             )
-            self.prog['u_shininess'].value = self._shininess
+            # PBR material
+            self.prog['u_roughness'].value = self._roughness
+            self.prog['u_metallic'].value  = self._metallic
 
         self.prog['u_texture'].value = 0  # texture unit
 

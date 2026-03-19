@@ -29,13 +29,13 @@ AR Mirror is a desktop-grade 3D virtual try-on system that reconstructs a full S
 
 ### 🌟 Key Highlights
 
-- **228 FPS End-to-End** — vectorized mesh wrapping + GPU rendering pipeline
+- **21+ FPS on CPU (Phase 2)** — production neural warp baseline
 - **3D Body Mesh** — SMPL parametric model (6890 vertices) from 2D pose
 - **GPU Rendering** — moderngl OpenGL 3.3 with Phong shading (452 FPS)
 - **Spring-Force Physics** — Verlet integration, structural/shear/bending springs
 - **Trained Neural Regressor** — 2D keypoints → SMPL params in 2.9ms
 - **Temporal Caching** — motion-threshold frame skip for static poses
-- **Multi-Phase Pipeline** — Phase 0 (fast blend) → Phase 2 (neural warp) → Phase 3 (3D mesh)
+- **Runtime Modes** — Phase 2 (default neural warp) with Phase 0 fallback
 
 ---
 
@@ -95,7 +95,7 @@ pip install -r requirements.txt
 ### Running
 
 ```bash
-# Full 3D pipeline (Phase 3 — 228 FPS)
+# Default runtime (Phase 2 neural warping)
 python app.py
 
 # Neural warping only (Phase 2)
@@ -121,7 +121,7 @@ python app.py --help
 
 ## 🏗️ Architecture
 
-### Phase 3: 3D Mesh Pipeline
+### Phase 3: 3D Mesh Pipeline (Experimental Reference)
 
 ```
 Camera Frame (640x480)
@@ -332,7 +332,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 📈 Roadmap
 
 - [x] Phase 0: Fast blending overlay
-- [x] Phase 1: Adaptive segmentation
+- [x] Phase 1: Adaptive segmentation (legacy milestone; merged into newer pipeline)
 - [x] Phase 2: Neural warping with CP-VTON
 - [x] Phase 3: GPU-accelerated 3D mesh pipeline (228 FPS)
   - [x] SMPL body reconstruction

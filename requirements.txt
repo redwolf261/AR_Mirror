@@ -28,3 +28,22 @@ onnxruntime-gpu==1.20.1
 gdown>=5.1.0
 kaggle>=1.6.0
 scipy>=1.12.0
+
+# --- 3D Body Model ---
+smplx>=0.1.28          # SMPL/SMPL-X parametric body model + LBS skinning
+
+# --- GPU Rendering ---
+moderngl>=5.0.0        # OpenGL 3.3 offscreen rendering (GPU garment mesh)
+
+# --- Phase A: ESRGAN texture upscaling ---
+# realesrgan>=0.3.0   # Real-ESRGAN x4plus (install separately if needed)
+# basicsr>=1.4.2      # Required by realesrgan
+
+# --- Phase C: RobustVideoMatting ---
+# onnxruntime-gpu already listed above satisfies RVM's runtime requirement
+
+# --- Phase D/E: Diffusion-based try-on (OOTDiffusion) ---
+# Heavy (~6 GB model); install only when using OOTDiffusion async warper:
+# diffusers>=0.27.0
+# transformers>=4.38.0
+# accelerate>=0.26.0

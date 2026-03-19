@@ -43,7 +43,23 @@ class BodySegmenter:
             threshold: Confidence threshold for binary mask
         """
         self.threshold = threshold
-        
+
+        # ── RobustVideoMatting primary backend (Phase C) ─────────────────────
+        # RVM produces soft alpha mattes with temporal consistency and
+        # outperforms the static selfie-segmenter.tflite.  Falls back
+        # transparently to MediaPipe if the ONNX model is unavailable.
+        self._rvm = None
+        try:
+            from src.core.rvm_matting import RVMMatting
+            self._rvm = RVMMatting()
+            if self._rvm.available:
+                print("BodySegmenter: RobustVideoMatting backend active.")
+            else:
+                self._rvm = None
+        except Exception as _e:
+            print(f"BodySegmenter: RVM unavailable ({_e}); using MediaPipe.")
+            self._rvm = None
+
         # Initialize MediaPipe Image Segmenter using new tasks API
         BaseOptions = mp.tasks.BaseOptions
         ImageSegmenter = mp.tasks.vision.ImageSegmenter
@@ -85,6 +101,21 @@ class BodySegmenter:
         Returns:
             SegmentationResult with binary mask and confidence
         """
+        # ── RVM primary path (Phase C) ────────────────────────────────────
+        if self._rvm is not None and self._rvm.available:
+            bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+            alpha = self._rvm.matte(bgr_image)
+            if alpha is not None:
+                binary_mask = (alpha > self.threshold).astype(np.uint8)
+                if refine:
+                    binary_mask = self._refine_mask(binary_mask)
+                confidence = float((binary_mask > 0).sum() / binary_mask.size)
+                return SegmentationResult(
+                    mask=binary_mask,
+                    confidence=confidence,
+                    raw_mask=alpha,
+                )
+
         if self.segmenter is None:
             # Fallback: simple background subtraction
             return self._fallback_segmentation(rgb_image)

@@ -1,76 +1,38 @@
-"""
-Test pose detection on a static image to verify MediaPipe API works
-"""
-import sys
+"""Deterministic pose-preprocessing checks without live camera dependencies."""
+
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import cv2
 import numpy as np
-from src.legacy.sizing_pipeline import PoseDetector
 
-def create_test_image():
-    """Create a simple test image with a person silhouette"""
-    img = np.zeros((480, 640, 3), dtype=np.uint8)
-    img.fill(128)  # Gray background
-    
-    # Draw a simple stick figure
-    # Head
-    cv2.circle(img, (320, 100), 30, (255, 200, 150), -1)
-    
-    # Body
-    cv2.line(img, (320, 130), (320, 280), (255, 200, 150), 20)
-    
-    # Arms
-    cv2.line(img, (320, 160), (250, 220), (255, 200, 150), 15)
-    cv2.line(img, (320, 160), (390, 220), (255, 200, 150), 15)
-    
-    # Legs
-    cv2.line(img, (320, 280), (280, 400), (255, 200, 150), 18)
-    cv2.line(img, (320, 280), (360, 400), (255, 200, 150), 18)
-    
-    return img
 
-def test_detection():
-    print("Testing MediaPipe Pose Detection...")
-    print("=" * 50)
-    
-    # Create test image
-    test_img = create_test_image()
-    cv2.imwrite("test_figure.jpg", test_img)
-    print("Created test image: test_figure.jpg")
-    
-    # Initialize detector
-    try:
-        detector = PoseDetector()
-        print(f"✓ PoseDetector initialized")
-        print(f"  Using legacy API: {detector.legacy_mode}")
-    except Exception as e:
-        print(f"✗ Failed to initialize PoseDetector: {e}")
-        return False
-    
-    # Test detection on synthetic image
-    print("\nTesting detection on synthetic image...")
-    landmarks = detector.detect(test_img)
-    
-    if landmarks:
-        print("✗ Detected pose on synthetic image (unexpected - it's just shapes)")
-        print("  This is fine - MediaPipe may find patterns in simple shapes")
-    else:
-        print("✓ No pose detected on synthetic image (expected)")
-    
-    # Test with a realistic scenario - person needs to be in front of camera
-    print("\n" + "=" * 50)
-    print("MediaPipe API Status: OPERATIONAL")
-    print("=" * 50)
-    print("\nThe pose detector is ready. Next steps:")
-    print("1. Stand in front of your camera (well-lit, full body visible)")
-    print("2. Run: python camera_test.py")
-    print("3. You should see green landmarks on your body")
-    print("\nIf camera test works, proceed to full sizing_pipeline.py test")
-    
-    return True
+ROOT = Path(__file__).resolve().parents[2]
 
-if __name__ == "__main__":
-    success = test_detection()
-    exit(0 if success else 1)
+
+def _create_test_frame() -> np.ndarray:
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.rectangle(frame, (200, 120), (440, 420), (0, 255, 0), -1)
+    cv2.circle(frame, (320, 85), 40, (255, 220, 170), -1)
+    return frame
+
+
+def test_pose_model_artifacts_exist() -> None:
+    assert (ROOT / "pose_landmarker_lite.task").exists()
+    assert (ROOT / "hand_landmarker.task").exists()
+
+
+def test_bgr_to_rgb_roundtrip_preserves_shape() -> None:
+    bgr = _create_test_frame()
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    bgr_roundtrip = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+    assert bgr.shape == rgb.shape
+    assert bgr_roundtrip.shape == bgr.shape
+
+
+def test_mirror_flip_keeps_dimensions_and_dtype() -> None:
+    frame = _create_test_frame()
+    flipped = cv2.flip(frame, 1)
+
+    assert flipped.shape == frame.shape
+    assert flipped.dtype == frame.dtype

@@ -14,7 +14,7 @@ import numpy as np
 import time
 import logging
 import threading
-from typing import Dict, Tuple, Optional, List
+from typing import Dict, Tuple, Optional, List, Any
 from dataclasses import dataclass
 
 # GPU optimization import
@@ -113,6 +113,15 @@ class Phase2NeuralPipeline:
             logger.warning(f"⚠ Depth estimator not available: {_de_err}")
             self.depth_estimator = None
 
+        # TPS Landmark-driven warp pipeline (replaces GMM for live camera)
+        try:
+            from src.pipelines.tps_pipeline import TPSPipeline
+            self.tps_pipeline: Optional[Any] = TPSPipeline()
+            logger.info("✓ TPS landmark warp pipeline ready")
+        except Exception as _tps_err:
+            self.tps_pipeline = None
+            logger.warning(f"⚠ TPS pipeline unavailable: {_tps_err}")
+
         # Frame-skip depth cache: run DA-V2 every N frames, reuse between
         # Reduces 62ms/frame to ~12ms equivalent on RTX 2050
         self._depth_frame_count: int = 0
@@ -131,18 +140,8 @@ class Phase2NeuralPipeline:
         self._tom_cache: Optional[np.ndarray] = None          # last synthesized frame
         self._tom_pending: bool = False                        # synthesis in flight
 
-        # Initialize DensePose converter (optional, graceful fallback)
-        try:
-            from src.core.densepose_converter import DensePoseLiveConverter
-            self.densepose_converter = DensePoseLiveConverter(device=self.device)
-            if self.densepose_converter.is_available:
-                logger.info("✓ DensePose enabled - 3D body surface mapping active")
-            else:
-                logger.info("⚠ DensePose not available - using MediaPipe pose")
-                self.densepose_converter = None
-        except ImportError:
-            logger.info("⚠ DensePose module not found - using MediaPipe pose")
-            self.densepose_converter = None
+        # DensePose removed — using MediaPipe pose (densepose_converter.py deleted)
+        self.densepose_converter = None
         
         # Initialize SMPL-X body reconstruction (stub until weights downloaded)
         # SMPLXMigrationStub wraps SMPLBodyReconstructor with the same public API
@@ -154,10 +153,8 @@ class Phase2NeuralPipeline:
         self.physics_sim = None
         try:
             from src.core.smpl_body_reconstruction import SMPLBodyReconstructor
-            from src.core.smplx_body_reconstruction import SMPLXMigrationStub
             from src.core.mesh_garment_wrapper import MeshGarmentWrapper, PhysicsSimulator
-            _smpl_base = SMPLBodyReconstructor(device=self.device)
-            self.smpl_reconstructor = SMPLXMigrationStub(smpl_reconstructor=_smpl_base)
+            self.smpl_reconstructor = SMPLBodyReconstructor(device=self.device)
             if self.smpl_reconstructor.is_available:
                 self.mesh_wrapper = MeshGarmentWrapper(device=self.device)
                 self.physics_sim = PhysicsSimulator(device=self.device)
@@ -173,7 +170,7 @@ class Phase2NeuralPipeline:
         # Initialize GPU renderer (moderngl) — works independently of SMPL
         try:
             from src.core.gpu_renderer import create_renderer
-            self.gpu_renderer = create_renderer(width=256, height=192, shading='phong')
+            self.gpu_renderer = create_renderer(width=960, height=720, shading='phong', samples=4)
             logger.info("✓ GPU renderer (moderngl) active")
         except Exception as e:
             logger.info(f"⚠ GPU renderer not available: {e}")
@@ -498,7 +495,9 @@ class Phase2NeuralPipeline:
         body_mask: Optional[np.ndarray] = None,
         use_densepose: bool = False,
         use_smpl: bool = False,
-        garment_type: str = 'tshirt'
+        garment_type: str = 'tshirt',
+        hand_lm_left: Optional[Any] = None,
+        hand_lm_right: Optional[Any] = None,
     ) -> NeuralWarpResult:
         """
         Warp garment using complete neural pipeline
@@ -516,6 +515,73 @@ class Phase2NeuralPipeline:
         Returns:
             NeuralWarpResult with warped garment and synthesis
         """
+        # ── TPS landmark-driven warp (primary path for live camera) ─────────
+        if self.tps_pipeline is not None:
+            h_f, w_f = person_image.shape[:2]
+            frame_bgr = cv2.cvtColor(
+                (person_image * 255).astype(np.uint8), cv2.COLOR_RGB2BGR
+            )
+            tps_result = self.tps_pipeline.warp(
+                frame_bgr, cloth_rgb, cloth_mask, mp_landmarks,
+                hand_lm_left=hand_lm_left,
+                hand_lm_right=hand_lm_right,
+                garment_type=garment_type,
+                cloth_mask_id=id(cloth_mask),
+            )
+            if tps_result is not None:
+                warped_cloth = tps_result.warped_cloth
+
+                # ── Phase B: SMPL 24-part body segmentation ──────────────────
+                # Produces a fine-grained body silhouette that the compositor
+                # uses to clip garment pixels off the head/neck and background.
+                smpl_body_mask = None
+                if self.body_segmenter is not None:
+                    try:
+                        t_seg = time.time()
+                        seg_small, _ = self.body_segmenter.segment(person_image)  # type: ignore
+                        smpl_body_mask = cv2.resize(
+                            seg_small.astype(np.float32), (w_f, h_f),
+                            interpolation=cv2.INTER_LINEAR
+                        )
+                        tps_result.timings['smpl_seg'] = time.time() - t_seg
+                    except Exception as _seg_e:
+                        logger.debug("Phase B seg skipped: %s", _seg_e)
+
+                # ── Phase D: AdaptiveEMA + TemporalFilter smoothing ───────────
+                # Reduces frame-to-frame jitter in the warped cloth texture.
+                if self.adaptive_ema is not None:
+                    lm_vals = np.array(
+                        [[v['x'], v['y']] for v in mp_landmarks.values()],
+                        dtype=np.float32
+                    )
+                    if hasattr(self, '_prev_lm_vals') and self._prev_lm_vals is not None:
+                        motion_mag = float(
+                            np.linalg.norm(lm_vals - self._prev_lm_vals, axis=-1).mean()
+                        ) * 100.0
+                    else:
+                        motion_mag = 0.0
+                    self._prev_lm_vals = lm_vals
+                    warped_cloth = self.adaptive_ema.smooth(warped_cloth, motion_mag)
+                if self.temporal_filter is not None:
+                    warped_cloth = self.temporal_filter.apply_filter(warped_cloth)
+                    warped_cloth = np.clip(warped_cloth, 0.0, 1.0)
+
+                nr = NeuralWarpResult(
+                    warped_cloth  = warped_cloth,
+                    warped_mask   = tps_result.warped_mask,
+                    synthesized   = None,
+                    quality_score = tps_result.quality_score,
+                    timings       = tps_result.timings,
+                    used_neural   = True,
+                    depth_proxy   = 0.0,
+                )
+                # Carry TPS extras as dynamic attrs — rendering.py reads these
+                nr.hand_mask      = tps_result.hand_mask       # type: ignore[attr-defined]
+                nr.rvm_alpha      = tps_result.rvm_alpha        # type: ignore[attr-defined]
+                nr.smpl_body_mask = smpl_body_mask              # type: ignore[attr-defined]
+                return nr
+            # Fall through to GMM if TPS returned None (no pose)
+
         # Route to 3D SMPL pipeline if requested and available
         if use_smpl and self.smpl_reconstructor is not None and self.mesh_wrapper is not None:
             try:
@@ -783,6 +849,17 @@ class Phase2NeuralPipeline:
         ], dtype=np.float32)
         
         if self.gpu_renderer is not None:
+            # Set PBR material roughness per garment type (metallic always 0.0 for fabric)
+            _roughness_map = {
+                'tshirt': 0.85, 'shirt': 0.80, 'blouse': 0.70,
+                'dress': 0.50, 'skirt': 0.55,
+                'pants': 0.82, 'jeans': 0.90, 'shorts': 0.85,
+                'jacket': 0.75, 'coat': 0.72, 'hoodie': 0.88,
+                'sweater': 0.92, 'suit': 0.65,
+            }
+            _roughness = _roughness_map.get(garment_type.lower(), 0.78)
+            self.gpu_renderer.set_material(roughness=_roughness, metallic=0.0)
+
             # GPU hardware rendering (moderngl)
             rendered = self.gpu_renderer.render_wrapped_mesh(
                 wrapped,
@@ -806,6 +883,32 @@ class Phase2NeuralPipeline:
             if warped_cloth.max() > 1.0:
                 warped_cloth /= 255.0
             warped_mask = np.any(rendered > 2, axis=-1).astype(np.float32)
+
+        # Step 6b: Depth-based occlusion — zero out garment pixels where a
+        # foreground object (hand, bag, etc.) is clearly in front of the body.
+        if self.depth_estimator is not None and warped_mask.any():
+            try:
+                t_depth = time.perf_counter()
+                person_bgr = cv2.cvtColor(
+                    (person_image * 255).astype(np.uint8), cv2.COLOR_RGB2BGR
+                )
+                depth_map = self.depth_estimator.estimate(person_bgr)  # (H, W) float32 metres
+                depth_map_resized = cv2.resize(depth_map, (w, h), interpolation=cv2.INTER_LINEAR)
+                # Estimate body depth = median depth at garment pixels
+                garment_pixels = depth_map_resized[warped_mask > 0.4]
+                if garment_pixels.size > 50:
+                    body_depth = float(np.median(garment_pixels))
+                    # Foreground threshold: 40 cm in front of body surface
+                    foreground_thresh = body_depth - 0.40
+                    # Pixels closer to camera than threshold → occlude garment
+                    occlusion_mask = (depth_map_resized < foreground_thresh).astype(np.float32)
+                    # Smooth the occlusion boundary
+                    occlusion_mask = cv2.GaussianBlur(occlusion_mask, (7, 7), 3)
+                    warped_mask = warped_mask * (1.0 - occlusion_mask)
+                    warped_mask = np.clip(warped_mask, 0.0, 1.0)
+                timings['depth_occlusion'] = time.perf_counter() - t_depth
+            except Exception as _dep_err:
+                logger.debug(f"Depth occlusion skipped: {_dep_err}")
         
         # Step 7: Composite onto person image
         mask_3ch = np.stack([warped_mask] * 3, axis=-1)

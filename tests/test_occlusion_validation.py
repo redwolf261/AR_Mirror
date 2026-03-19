@@ -1,120 +1,87 @@
-#!/usr/bin/env python3
-"""
-Occlusion Validation Test
-Verifies that semantic parsing correctly prevents garment from covering face/hair
-"""
+"""Deterministic occlusion-mask checks for hand/forearm layering."""
 
-import sys
+from dataclasses import dataclass
+import importlib.util
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
 
 import numpy as np
-import cv2
 
-print("=" * 70)
-print("OCCLUSION VALIDATION TEST")
-print("=" * 70)
 
-# Test 1: Import modules
-print("\n[1/5] Testing imports...")
-try:
-    from src.core.semantic_parser import SemanticParser, create_occlusion_aware_composite, BodyPart
-    print("✓ Semantic parser imported")
-except Exception as e:
-    print(f"✗ Failed: {e}")
-    sys.exit(1)
+ROOT = Path(__file__).resolve().parent.parent
 
-# Test 2: Initialize parser with optimizations
-print("\n[2/5] Testing parser initialization with optimizations...")
-try:
-    parser = SemanticParser(use_mediapipe=True, temporal_smoothing=True)
-    print("✓ Parser initialized with temporal smoothing")
-except Exception as e:
-    print(f"✗ Failed: {e}")
-    sys.exit(1)
 
-# Test 3: Test resolution scaling
-print("\n[3/5] Testing resolution scaling...")
-try:
-    # Create test frame (640x480)
-    test_frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-    
-    # Parse at full resolution
-    body_parts_full = parser.parse(test_frame, target_resolution=None)
-    print(f"  Full resolution: {body_parts_full['hair'].shape}")
-    
-    # Parse at optimized resolution
-    body_parts_opt = parser.parse(test_frame, target_resolution=(256, 192))
-    print(f"  Optimized resolution: {body_parts_opt['hair'].shape}")
-    
-    # Verify output is upsampled back to original size
-    if body_parts_opt['hair'].shape != (480, 640):
-        raise Exception(f"Output not upsampled correctly: {body_parts_opt['hair'].shape}")
-    
-    print("✓ Resolution scaling works correctly")
-except Exception as e:
-    print(f"✗ Failed: {e}")
-    sys.exit(1)
+def _load_hand_occluder_class():
+    module_path = ROOT / "src" / "core" / "hand_occluder.py"
+    spec = importlib.util.spec_from_file_location("hand_occluder_module", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.HandOccluder
 
-# Test 4: Test temporal smoothing
-print("\n[4/5] Testing temporal smoothing...")
-try:
-    # Parse first frame
-    frame1 = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-    masks1 = parser.parse(frame1, target_resolution=(256, 192))
-    
-    # Parse second frame (should blend with first)
-    frame2 = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-    masks2 = parser.parse(frame2, target_resolution=(256, 192))
-    
-    print("✓ Temporal smoothing active (masks cached)")
-except Exception as e:
-    print(f"✗ Failed: {e}")
-    sys.exit(1)
 
-# Test 5: Test occlusion-aware compositing
-print("\n[5/5] Testing occlusion-aware compositing...")
-try:
-    # Create test scenario
-    test_frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-    test_garment = np.random.rand(480, 640, 3).astype(np.float32)
-    test_mask = np.ones((480, 640), dtype=np.float32)  # Full garment mask
-    
-    # Parse body parts
-    body_parts = parser.parse(test_frame, target_resolution=(256, 192))
-    
-    # Create fake face/hair regions for testing
-    body_parts['face'][100:200, 250:350] = 255  # Face region
-    body_parts['hair'][50:150, 200:400] = 255   # Hair region
-    
-    # Composite with occlusion handling
-    result = create_occlusion_aware_composite(
-        test_frame,
-        test_garment,
-        test_mask,
-        body_parts,
-        collar_constraint=True
+@dataclass
+class _HandLm:
+    x: float
+    y: float
+
+
+def _synthetic_hand(cx: float, cy: float, spread: float = 0.02) -> list[_HandLm]:
+    points: list[_HandLm] = []
+    for i in range(21):
+        ox = ((i % 5) - 2) * spread * 0.5
+        oy = ((i // 5) - 2) * spread * 0.5
+        points.append(_HandLm(cx + ox, cy + oy))
+    return points
+
+
+def test_hand_occluder_returns_zero_mask_without_landmarks() -> None:
+    HandOccluder = _load_hand_occluder_class()
+    occluder = HandOccluder()
+    mask = occluder.make_mask(
+        frame_shape=(480, 640, 3),
+        hand_lm_left=None,
+        hand_lm_right=None,
+        pose_lm={},
     )
-    
-    # Verify output
-    if result.shape != test_frame.shape:
-        raise Exception(f"Output shape mismatch: {result.shape}")
-    if result.dtype != np.uint8:
-        raise Exception(f"Output dtype wrong: {result.dtype}")
-    
-    print("✓ Occlusion-aware compositing works")
-    print(f"  Output shape: {result.shape}")
-    print(f"  Output dtype: {result.dtype}")
-    
-except Exception as e:
-    print(f"✗ Failed: {e}")
-    sys.exit(1)
 
-print("\n" + "=" * 70)
-print("✅ ALL OCCLUSION TESTS PASSED")
-print("=" * 70)
-print("\nOptimizations verified:")
-print("  ✓ Resolution scaling (256×192 → full res)")
-print("  ✓ Temporal smoothing (reduces flicker)")
-print("  ✓ Occlusion handling (face/hair on top)")
-print("\nExpected performance: 14-17 FPS with semantic parsing enabled")
+    assert mask.shape == (480, 640)
+    assert mask.dtype == np.uint8
+    assert int(mask.sum()) == 0
+
+
+def test_hand_occluder_generates_nonzero_mask_with_pose_and_hand() -> None:
+    HandOccluder = _load_hand_occluder_class()
+    occluder = HandOccluder()
+    pose = {
+        13: {"x": 0.40, "y": 0.45, "visibility": 0.95},
+        15: {"x": 0.36, "y": 0.58, "visibility": 0.95},
+    }
+    hand = _synthetic_hand(0.36, 0.60)
+
+    mask = occluder.make_mask(
+        frame_shape=(480, 640, 3),
+        hand_lm_left=hand,
+        hand_lm_right=None,
+        pose_lm=pose,
+    )
+
+    assert mask.shape == (480, 640)
+    assert mask.dtype == np.uint8
+    assert mask.sum() > 0
+
+
+def test_hand_occluder_is_stable_for_same_inputs() -> None:
+    HandOccluder = _load_hand_occluder_class()
+    occluder = HandOccluder()
+    pose = {
+        14: {"x": 0.62, "y": 0.44, "visibility": 0.96},
+        16: {"x": 0.66, "y": 0.57, "visibility": 0.96},
+    }
+    hand = _synthetic_hand(0.66, 0.59)
+
+    mask_a = occluder.make_mask((480, 640, 3), None, hand, pose)
+    mask_b = occluder.make_mask((480, 640, 3), None, hand, pose)
+
+    assert mask_a.shape == mask_b.shape
+    assert int(np.abs(mask_a.astype(np.int16) - mask_b.astype(np.int16)).sum()) == 0

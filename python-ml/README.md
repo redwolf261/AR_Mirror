@@ -7,8 +7,12 @@ This directory contains the Python machine learning service for the AR Mirror sy
 ## Quick Start
 
 ```bash
-# Install dependencies
+# Install dependencies (standalone python-ml usage)
 pip install -r requirements.txt
+
+# If you are running the full AR Mirror app from repo root,
+# install root dependencies first to keep one consistent environment:
+# pip install -r ../requirements.txt
 
 # Download models
 python ../scripts/setup/download_models.py

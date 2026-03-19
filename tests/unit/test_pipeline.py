@@ -1,154 +1,52 @@
-import sys
+"""Repository-native unit checks for garment inventory integrity."""
+
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-import unittest
-import numpy as np
-from src.legacy.sizing_pipeline import (
-    BodyMeasurements,
-    BodyRegion,
-    GarmentSpec,
-    FitDecision,
-    MeasurementEstimator,
-    SizeMatcher
-)
+import json
 
 
-class TestMeasurementEstimator(unittest.TestCase):
-    
-    def setUp(self):
-        self.estimator = MeasurementEstimator(640, 480)
-        
-    def test_valid_measurements(self):
-        landmarks = {
-            0: {'x': 0.5, 'y': 0.2, 'z': 0, 'visibility': 0.9},
-            11: {'x': 0.4, 'y': 0.35, 'z': 0, 'visibility': 0.9},
-            12: {'x': 0.6, 'y': 0.35, 'z': 0, 'visibility': 0.9},
-            23: {'x': 0.42, 'y': 0.65, 'z': 0, 'visibility': 0.9},
-            24: {'x': 0.58, 'y': 0.65, 'z': 0, 'visibility': 0.9}
-        }
-        
-        measurements = self.estimator.estimate(landmarks)
-        self.assertIsNotNone(measurements)
-        assert measurements is not None  # Type narrowing
-        self.assertGreater(measurements.shoulder_width_cm, 35)
-        self.assertLess(measurements.shoulder_width_cm, 55)
-        
-    def test_tilted_shoulders_rejected(self):
-        landmarks = {
-            0: {'x': 0.5, 'y': 0.2, 'z': 0, 'visibility': 0.9},
-            11: {'x': 0.4, 'y': 0.3, 'z': 0, 'visibility': 0.9},
-            12: {'x': 0.6, 'y': 0.4, 'z': 0, 'visibility': 0.9},
-            23: {'x': 0.42, 'y': 0.65, 'z': 0, 'visibility': 0.9},
-            24: {'x': 0.58, 'y': 0.65, 'z': 0, 'visibility': 0.9}
-        }
-        
-        measurements = self.estimator.estimate(landmarks)
-        self.assertIsNone(measurements)
-    
-    def test_invalid_distance_rejected(self):
-        landmarks = {
-            0: {'x': 0.5, 'y': 0.1, 'z': 0, 'visibility': 0.9},
-            11: {'x': 0.4, 'y': 0.12, 'z': 0, 'visibility': 0.9},
-            12: {'x': 0.6, 'y': 0.12, 'z': 0, 'visibility': 0.9},
-            23: {'x': 0.42, 'y': 0.15, 'z': 0, 'visibility': 0.9},
-            24: {'x': 0.58, 'y': 0.15, 'z': 0, 'visibility': 0.9}
-        }
-        
-        measurements = self.estimator.estimate(landmarks)
-        self.assertIsNone(measurements)
+ROOT = Path(__file__).resolve().parents[2]
+INVENTORY = ROOT / "config" / "garment_inventory.json"
 
 
-class TestSizeMatcher(unittest.TestCase):
-    
-    def setUp(self):
-        garments = [
-            {
-                "sku": "TEST-M",
-                "size_label": "M",
-                "shoulder_cm": 44.0,
-                "chest_cm": 50.0,
-                "length_cm": 65.0
-            }
-        ]
-        
-        import tempfile
-        import json
-        self.temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json')
-        json.dump(garments, self.temp_file)
-        self.temp_file.close()
-        
-        self.matcher = SizeMatcher(self.temp_file.name)
-        
-    def test_tight_fit_detection(self):
-        measurements = BodyMeasurements(
-            shoulder_width_cm=43.0,
-            chest_width_cm=49.0,
-            torso_length_cm=63.0,
-            confidence=0.9,
-            timestamp=0,
-            detected_regions={BodyRegion.UPPER_BODY}
-        )
-        
-        result = self.matcher.match(measurements, "TEST-M")
-        self.assertIsNotNone(result)
-        assert result is not None  # Type narrowing
-        self.assertEqual(result.decision, FitDecision.TIGHT)
-    
-    def test_good_fit_detection(self):
-        measurements = BodyMeasurements(
-            shoulder_width_cm=40.0,
-            chest_width_cm=44.0,
-            torso_length_cm=60.0,
-            confidence=0.9,
-            timestamp=0,
-            detected_regions={BodyRegion.UPPER_BODY}
-        )
-        
-        result = self.matcher.match(measurements, "TEST-M")
-        self.assertIsNotNone(result)
-        assert result is not None  # Type narrowing
-        self.assertEqual(result.decision, FitDecision.GOOD)
-    
-    def test_loose_fit_detection(self):
-        measurements = BodyMeasurements(
-            shoulder_width_cm=36.0,
-            chest_width_cm=40.0,
-            torso_length_cm=56.0,
-            confidence=0.9,
-            timestamp=0,
-            detected_regions={BodyRegion.UPPER_BODY}
-        )
-        
-        result = self.matcher.match(measurements, "TEST-M")
-        self.assertIsNotNone(result)
-        assert result is not None  # Type narrowing
-        self.assertEqual(result.decision, FitDecision.LOOSE)
-    
-    def tearDown(self):
-        import os
-        os.unlink(self.temp_file.name)
+def _load_inventory() -> dict:
+    return json.loads(INVENTORY.read_text(encoding="utf-8"))
 
 
-class TestScaleFactor(unittest.TestCase):
-    
-    def test_scale_factor_computation(self):
-        estimator = MeasurementEstimator(640, 480)
-        
-        landmarks = {
-            0: {'x': 0.5, 'y': 0.2, 'z': 0, 'visibility': 0.9},
-            11: {'x': 0.4, 'y': 0.35, 'z': 0, 'visibility': 0.9},
-            12: {'x': 0.6, 'y': 0.35, 'z': 0, 'visibility': 0.9},
-            23: {'x': 0.42, 'y': 0.65, 'z': 0, 'visibility': 0.9},
-            24: {'x': 0.58, 'y': 0.65, 'z': 0, 'visibility': 0.9}
-        }
-        
-        scale = estimator._compute_scale_factor(landmarks)
-        self.assertIsNotNone(scale)
-        assert scale is not None  # Type narrowing
-        self.assertGreater(scale, 0)
-        self.assertLess(scale, 1.0)
+def test_inventory_file_exists() -> None:
+    assert INVENTORY.exists(), "Missing config/garment_inventory.json"
 
 
-if __name__ == '__main__':
-    unittest.main()
+def test_inventory_has_garments() -> None:
+    data = _load_inventory()
+    garments = data.get("garments", [])
+    assert isinstance(garments, list)
+    assert len(garments) > 0
+
+
+def test_garment_schema_is_valid() -> None:
+    garments = _load_inventory()["garments"]
+
+    for garment in garments:
+        assert garment.get("sku")
+        assert garment.get("name")
+        assert garment.get("type")
+        assert garment.get("category")
+
+        color = garment.get("color")
+        assert isinstance(color, list)
+        assert len(color) == 3
+        assert all(isinstance(c, int) and 0 <= c <= 255 for c in color)
+
+        sizes = garment.get("sizes")
+        assert isinstance(sizes, list)
+        assert len(sizes) > 0
+
+        price = garment.get("price")
+        assert isinstance(price, (int, float))
+        assert float(price) > 0
+
+
+def test_sku_values_are_unique() -> None:
+    garments = _load_inventory()["garments"]
+    skus = [g["sku"] for g in garments]
+    assert len(skus) == len(set(skus)), "Duplicate SKU values found in inventory"

@@ -114,7 +114,11 @@ class BodyAwareGarmentFitter:
         timestamp_ms = elapsed_ns // 1_000_000
         
         self.total_detections += 1
+        t_detect = time.perf_counter()
         detection_result = self.detector.detect_for_video(mp_image, timestamp_ms)
+        detect_ms = (time.perf_counter() - t_detect) * 1000
+        if detect_ms > 10:  # Only log if significant
+            logger.debug(f"[Pose] MediaPipe detection: {detect_ms:.1f}ms")
         
         if not detection_result.pose_landmarks:
             self.consecutive_failures += 1
@@ -164,15 +168,15 @@ class BodyAwareGarmentFitter:
         shoulder_width = abs(right_shoulder.x - left_shoulder.x) * w
         torso_height = abs(left_shoulder.y - left_hip.y) * h
 
-        # --- Camera calibration: perspective-scale normalisation ---
-        # Estimate focal length f (px) from: f = (shoulder_px * Z) / shoulder_real
-        # We cannot measure Z directly, so we use the FIRST reliable frame to
-        # establish a reference and then normalise all subsequent frames so that
-        # garment sizing is stable regardless of subject distance.
-        shoulder_width, torso_height = self._apply_depth_normalisation(
-            shoulder_width, torso_height, w, h
-        )
-        
+        # --- Depth normalisation DISABLED ---
+        # Normalising to a "canonical" shoulder width caused the garment to
+        # appear undersized when the person stands close to the camera and
+        # oversized when they stand far away.  The garment should always be
+        # sized to the ACTUAL detected body size in the current frame.
+        # shoulder_width, torso_height = self._apply_depth_normalisation(
+        #     shoulder_width, torso_height, w, h
+        # )
+
         # Calculate torso bounding box
         torso_x1 = int(min(left_shoulder.x, left_hip.x) * w)
         torso_y1 = int(left_shoulder.y * h)

@@ -1,34 +1,23 @@
-"""Test app.py phases without GUI"""
-import sys
+"""Phase selection behavior tests for ARMirrorApp."""
+
+import pytest
+
+pytest.importorskip("cv2")
+pytest.importorskip("numpy")
+
 from app import ARMirrorApp
-import numpy as np
 
-print("Testing Phase 0...")
-app0 = ARMirrorApp(phase=0, demo_duration=1)
-if app0.initialize():
-    print("✓ Phase 0 initialized successfully")
-    # Test render without camera
-    test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    try:
-        result = app0._render_garment(test_frame, app0.garments[0])
-        print(f"✓ Phase 0 render OK: {result.shape}")
-    except Exception as e:
-        print(f"✗ Phase 0 render failed: {e}")
-else:
-    print("✗ Phase 0 init failed")
 
-print("\nTesting Phase 2...")
-app2 = ARMirrorApp(phase=2, demo_duration=1)
-if app2.initialize():
-    print("✓ Phase 2 initialized successfully")
-    # Test render without camera
-    test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    try:
-        result = app2._render_garment(test_frame, app2.garments[0])
-        print(f"✓ Phase 2 render OK: {result.shape}")
-    except Exception as e:
-        print(f"✗ Phase 2 render failed: {e}")
-else:
-    print("✗ Phase 2 init failed")
+def test_phase_0_is_preserved() -> None:
+    app = ARMirrorApp(phase=0, demo_duration=1)
+    assert app.phase == 0
 
-print("\n✅ All phases working!")
+
+def test_phase_2_is_preserved() -> None:
+    app = ARMirrorApp(phase=2, demo_duration=1)
+    assert app.phase == 2
+
+
+def test_phase_1_is_normalized_to_fallback() -> None:
+    app = ARMirrorApp(phase=1, demo_duration=1)
+    assert app.phase == 0

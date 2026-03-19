@@ -43,28 +43,19 @@ try:
 except Exception as e:
     logger.warning(f"Phase 2 neural pipeline not available: {e}")
 
-# Import Semantic Parser for Occlusion Handling
-SEMANTIC_PARSING_AVAILABLE = False
-try:
-    from src.core.semantic_parser import SemanticParser, create_occlusion_aware_composite
-    SEMANTIC_PARSING_AVAILABLE = True
-except Exception as e:
-    logger.warning(f"Semantic parsing not available: {e}")
-
-# Import legacy GMM warper (fallback)
-GMM_AVAILABLE = False
-try:
-    sys.path.insert(0, str(Path(__file__).parent / "scripts" / "utilities"))
-    sys.path.insert(0, str(Path(__file__).parent / "cp-vton"))  # For networks module
-    from gmm_warper import GMMWarper, build_agnostic_representation
-    from convert_pose_map import load_openpose_json, get_pose_map
-    GMM_AVAILABLE = True
-except Exception as e:
-    logger.debug(f"Legacy GMM warper not available: {e}")
+# Legacy GMM warper removed — Phase 2 neural pipeline is the sole renderer
 
 # Import rendering and overlay mixins
 from src.app.rendering import GarmentRenderer, load_viton_cloth
 from src.app.overlay import OverlayRenderer
+
+# Web UI server
+try:
+    from web_server import WebServer as _WebServer
+    WEB_SERVER_AVAILABLE = True
+except Exception as _ws_err:
+    logger.warning(f"WebServer not available: {_ws_err}")
+    WEB_SERVER_AVAILABLE = False
 
 # ── Data Flywheel ────────────────────────────────────────────────────────────
 FLYWHEEL_AVAILABLE = False
@@ -99,7 +90,11 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
         self.mp_drawing = None
         
         # Phase selection
-        self.phase = phase
+        if phase == 1:
+            logger.warning("Phase 1 is deprecated; using Phase 0 fallback mode")
+            self.phase = 0
+        else:
+            self.phase = phase
         self.phase2_pipeline = None
         self.gmm_warper = None
         self.body_fitter = None
@@ -119,6 +114,9 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
         # Debug/feedback mode
         self.show_debug = False
         self._last_body_measurements: Optional[dict] = None
+
+        # Web UI server
+        self._web_server = None
 
         # Data flywheel
         self._session_logger = get_session_logger() if FLYWHEEL_AVAILABLE else None
@@ -166,19 +164,10 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                     print(f"     [OK] Phase 2 loaded on {stats['device']}")
                 except Exception as e:
                     print(f"     [WARN] Phase 2 loading failed: {e}")
-                    print(f"     [INFO] Falling back to Phase 1")
-                    self.phase = 1
-            elif self.phase == 1 and GMM_AVAILABLE:
-                print("[3/4] Loading Phase 1 GMM warper...")
-                try:
-                    self.gmm_warper = GMMWarper()
-                    print("     [OK] Phase 1 GMM loaded")
-                except Exception as e:
-                    print(f"     [WARN] GMM loading failed: {e}")
-                    print("     [INFO] Using simple blending")
+                    print(f"     [INFO] Falling back to Phase 0")
                     self.phase = 0
             else:
-                print("[3/4] Using Phase 0 (simple blending)")
+                print("[3/4] Phase 2 unavailable — using Phase 0 (simple blending)")
                 self.phase = 0
             
             # Initialize body-aware fitter
@@ -191,21 +180,6 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                 print(f"     [WARN] Body-aware fitter not available: {e}")
                 self.body_fitter = None
             
-            # Initialize semantic parser for proper occlusion
-            if SEMANTIC_PARSING_AVAILABLE:
-                print("[3.6/4] Initializing Semantic Parser...")
-                try:
-                    self.semantic_parser = SemanticParser(
-                        backend='auto',
-                        temporal_smoothing=True,
-                        onnx_model_path='models/schp_lip.onnx'
-                    )
-                    backend_name = self.semantic_parser.backend.__class__.__name__
-                    print(f"     [OK] Semantic parser loaded ({backend_name})")
-                except Exception as e:
-                    print(f"     [WARN] Semantic parser failed: {e}")
-                    self.semantic_parser = None
-            
             # Start data flywheel session
             if FLYWHEEL_AVAILABLE and self._session_logger:
                 try:
@@ -216,6 +190,17 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                     logger.info(f"     [OK] Data flywheel session started: {self._current_session_id}")
                 except Exception as _e:
                     logger.warning(f"     [WARN] Flywheel session failed to start: {_e}")
+
+            # Start Web UI server
+            if WEB_SERVER_AVAILABLE:
+                self._web_server = _WebServer(port=5050)
+                self._web_server.register_garment_list(
+                    lambda: [g.get("file", g.get("name", "")) for g in self.garments]
+                )
+                self._web_server.register_garment_callback(self._on_web_garment_select)
+                self._web_server.start()
+                print("     [OK] Web UI available at http://localhost:5050")
+                print("          Open the React UI at http://localhost:3001")
 
             print("[4/4] Opening webcam...")
             self.cap = cv2.VideoCapture(0)
@@ -235,7 +220,6 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
             self.start_time = time.time()
             mode_map = {
                 2: "PHASE 2: NEURAL WARPING (GMM+TOM)",
-                1: "PHASE 1: GMM TPS WARPING",
                 0: "PHASE 0: ALPHA BLENDING"
             }
             mode_str = mode_map.get(self.phase, "UNKNOWN")
@@ -248,43 +232,62 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
             return False
     
     def _get_available_garments(self):
-        """Get list of available garments"""
-        garments = [
-            {"name": "T-Shirt (Red)", "sku": "TSH-001", "color": (0, 0, 255)},
-            {"name": "T-Shirt (Blue)", "sku": "TSH-002", "color": (255, 0, 0)},
-            {"name": "Shirt (White)", "sku": "SHT-001", "color": (255, 255, 255)},
-            {"name": "Sweater", "sku": "SWT-001", "color": (0, 165, 255)},
-            {"name": "Jacket", "sku": "JKT-001", "color": (100, 100, 100)},
-            {"name": "Hoodie", "sku": "HOD-001", "color": (75, 0, 130)},
+        """Get list of available garments from dataset/train/cloth"""
+        cloth_dir = Path("dataset/train/cloth")
+        if cloth_dir.exists():
+            files = sorted(cloth_dir.glob("*.jpg"))[:200]  # cap at 200 for fast start
+            garments = [
+                {"name": f.stem, "sku": f.stem, "file": f.name}
+                for f in files
+            ]
+            if garments:
+                return garments
+        # Fallback to colored placeholders
+        return [
+            {"name": "T-Shirt (Red)",   "sku": "TSH-001", "color": (0, 0, 255)},
+            {"name": "T-Shirt (Blue)",  "sku": "TSH-002", "color": (255, 0, 0)},
+            {"name": "Shirt (White)",   "sku": "SHT-001", "color": (255, 255, 255)},
+            {"name": "Sweater",         "sku": "SWT-001", "color": (0, 165, 255)},
+            {"name": "Jacket",          "sku": "JKT-001", "color": (100, 100, 100)},
+            {"name": "Hoodie",          "sku": "HOD-001", "color": (75, 0, 130)},
         ]
-        return garments
     
     def _load_dataset_pairs(self):
-        """Load VITON dataset image pairs"""
+        """Load VITON dataset garment pairs directly from cloth directory"""
         pairs = []
+        cloth_dir = Path("dataset/train/cloth")
+        mask_dir  = Path("dataset/train/cloth-mask")
+
+        # Prefer train_pairs.txt if it exists
         dataset_file = Path("dataset/train_pairs.txt")
-        
         if dataset_file.exists():
             try:
                 with open(dataset_file, 'r') as f:
                     for line in f:
                         parts = line.strip().split()
                         if len(parts) >= 2:
-                            person_path = Path(f"dataset/train/image/{parts[0]}")
-                            garment_path = Path(f"dataset/train/cloth/{parts[1]}")
-                            
-                            if person_path.exists() and garment_path.exists():
-                                pairs.append({
-                                    'person': parts[0],
-                                    'garment': parts[1]
-                                })
-                                if len(pairs) >= 50:
+                            garment_path = cloth_dir / parts[1]
+                            if garment_path.exists():
+                                pairs.append({'person': parts[0], 'garment': parts[1]})
+                                if len(pairs) >= 200:
                                     break
+                if pairs:
+                    return pairs
             except Exception as e:
-                print(f"     [WARN] Could not load dataset: {e}")
+                print(f"     [WARN] Could not read pairs file: {e}")
+
+        # Fall back to scanning cloth directory directly
+        if cloth_dir.exists():
+            for f in sorted(cloth_dir.glob("*.jpg"))[:200]:
+                # Only include garments that have a matching mask
+                if mask_dir.exists() and not (mask_dir / f.name).exists():
+                    continue
+                pairs.append({'person': f.name, 'garment': f.name})
+            if pairs:
+                print(f"     [INFO] Loaded {len(pairs)} garments from dataset/train/cloth")
         else:
-            print(f"     [WARN] Dataset file not found: {dataset_file}")
-        
+            print(f"     [WARN] Cloth directory not found: {cloth_dir}")
+
         return pairs
     
     def run(self):
@@ -292,12 +295,14 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
         print("\n" + "="*80)
         print("STARTING LIVE AR MIRROR DEMO")
         print("="*80)
-        print(f"\nRunning for {self.demo_duration} seconds...")
+        _infinite = self.demo_duration <= 0
+        _dur_str = "until stopped" if _infinite else f"{self.demo_duration} seconds"
+        print(f"\nRunning for {_dur_str}...")
         print("Press 'q' to quit, arrows to change garments")
         print("Press 'd' to toggle debug overlay (skeleton + detection status)")
         print("Press 'o' to toggle info overlay\n")
         
-        demo_end_time = time.time() + self.demo_duration
+        demo_end_time = time.time() + (self.demo_duration if not _infinite else 1e18)
         
         try:
             while time.time() < demo_end_time:
@@ -364,6 +369,19 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                     logger.warning(f"Render error: {e}")
                     output_frame = frame
                 
+                # Push frame and state to WebUI (before overlay bakes in text)
+                if self._web_server:
+                    try:
+                        _ws_fps = 1.0 / np.mean(list(self.frame_times)) if self.frame_times else 0.0
+                        _ws_gname = self.garments[self.current_garment_idx].get(
+                            "file", self.garments[self.current_garment_idx].get("name", "")
+                        )
+                        _ws_meas = self._cached_body_measurements
+                        self._web_server.push_frame(output_frame)
+                        self._web_server.push_state(_ws_fps, _ws_gname, _ws_meas)
+                    except Exception:
+                        pass
+
                 # Draw overlay
                 if self.show_overlay:
                     display_frame = self._draw_overlay(output_frame, None)
@@ -406,9 +424,12 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                 if self.frame_count % 10 == 0:
                     avg_fps = 1.0 / np.mean(list(self.frame_times)) if self.frame_times else 0
                     elapsed = time.time() - self.start_time
-                    progress = int((elapsed / self.demo_duration) * 50)
-                    bar = "[" + "=" * progress + " " * (50 - progress) + "]"
-                    print(f"\r {bar} {elapsed:.0f}s/{self.demo_duration}s | FPS: {avg_fps:.1f}", end="", flush=True)
+                    if self.demo_duration > 0:
+                        progress = int((elapsed / self.demo_duration) * 50)
+                        bar = "[" + "=" * progress + " " * (50 - progress) + "]"
+                        print(f"\r {bar} {elapsed:.0f}s/{self.demo_duration}s | FPS: {avg_fps:.1f}", end="", flush=True)
+                    else:
+                        print(f"\r  ∞  {elapsed:.0f}s elapsed | FPS: {avg_fps:.1f}", end="", flush=True)
         
         except KeyboardInterrupt:
             pass
@@ -417,6 +438,16 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
             self._cleanup()
             self._print_results()
     
+    def _on_web_garment_select(self, name: str):
+        """Called from the WebServer thread when user selects a garment in the browser UI."""
+        for i, g in enumerate(self.garments):
+            if g.get("file") == name or g.get("name") == name or g.get("sku") == name:
+                self.current_garment_idx = i
+                self._on_garment_change()
+                logger.info(f"[Web] Garment switched → {name} (idx={i})")
+                return
+        logger.warning(f"[Web] Garment not found: {name}")
+
     def _on_garment_change(self):
         """Close current flywheel session and open a new one for the new garment."""
         if not (FLYWHEEL_AVAILABLE and self._session_logger):
@@ -499,10 +530,8 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
         print(f"   Semantic parsing: every {self._semantic_skip_interval} frames")
         
         print(f"\nROADMAP:")
-        print(f"   Phase 1 (Current): 14.0 FPS")
-        print(f"   Phase 2A (GPU): 18-22 FPS")
-        print(f"   Phase 2B (Neural): 20-27 FPS")
-        print(f"   Phase 3 (Temporal): 15-18 FPS + stability")
+        print(f"   Phase 0 (Fallback): 30+ FPS")
+        print(f"   Phase 2 (Production): 20-27 FPS")
         print("\n" + "="*80 + "\n")
 
 
@@ -513,19 +542,17 @@ def main():
         epilog="""
 Phases:
   Phase 0: Simple alpha blending (fastest, 30+ FPS)
-  Phase 1: GMM TPS warping (legacy, 15-20 FPS)
   Phase 2: Neural warping with GMM+TOM (production, 21+ FPS)
 
 Examples:
   python app.py                    # Use Phase 2 (default)
   python app.py --phase 2          # Neural warping
-  python app.py --phase 1          # Legacy GMM
   python app.py --phase 0          # Simple blending
   python app.py --duration 60      # Run for 60 seconds
         """
     )
-    parser.add_argument('--phase', type=int, default=2, choices=[0, 1, 2],
-                        help='Phase to use (0=blend, 1=gmm, 2=neural)')
+    parser.add_argument('--phase', type=int, default=2, choices=[0, 2],
+                        help='Phase to use (0=blend, 2=neural)')
     parser.add_argument('--fps', type=int, default=30,
                         help='Target FPS (default: 30)')
     parser.add_argument('--duration', type=int, default=120,

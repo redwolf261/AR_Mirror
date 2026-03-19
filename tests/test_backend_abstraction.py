@@ -1,106 +1,39 @@
-#!/usr/bin/env python3
-"""Test backend-agnostic semantic parser refactoring"""
+"""Backend boundary checks for the current AR Mirror architecture."""
 
-import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
+import json
 
-print("=" * 70)
-print("BACKEND-AGNOSTIC SEMANTIC PARSER TEST")
-print("=" * 70)
 
-# Test 1: Import new backend system
-print("\n[1/5] Testing backend imports...")
-try:
-    from src.core.parsing_backends import ParsingBackend, MediaPipeBackend, ONNXParsingBackend
-    from src.core.semantic_parser import SemanticParser
-    print("[OK] Backend abstraction imports successful")
-except Exception as e:
-    print(f"[FAIL] {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
+ROOT = Path(__file__).resolve().parent.parent
 
-# Test 2: Initialize with MediaPipe backend
-print("\n[2/5] Testing MediaPipe backend...")
-try:
-    parser_mp = SemanticParser(backend='mediapipe', temporal_smoothing=True)
-    backend_name = parser_mp.backend.__class__.__name__
-    print(f"[OK] MediaPipe backend initialized: {backend_name}")
-    assert backend_name == 'MediaPipeBackend', f"Expected MediaPipeBackend, got {backend_name}"
-except Exception as e:
-    print(f"[FAIL] {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
 
-# Test 3: Test auto-select (should fallback to MediaPipe since no ONNX model)
-print("\n[3/5] Testing auto-select backend...")
-try:
-    parser_auto = SemanticParser(
-        backend='auto',
-        temporal_smoothing=True,
-        onnx_model_path='models/schp_lip.onnx'  # Doesn't exist yet
-    )
-    backend_name = parser_auto.backend.__class__.__name__
-    print(f"[OK] Auto-selected backend: {backend_name}")
-    # Should fallback to MediaPipe since ONNX model doesn't exist
-    assert backend_name == 'MediaPipeBackend', f"Expected MediaPipeBackend fallback, got {backend_name}"
-except Exception as e:
-    print(f"[FAIL] {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
+def test_legacy_semantic_backend_files_are_removed() -> None:
+    assert not (ROOT / "src" / "core" / "semantic_parser.py").exists()
+    assert not (ROOT / "src" / "core" / "parsing_backends.py").exists()
 
-# Test 4: Test parsing with backend
-print("\n[4/5] Testing parsing with backend abstraction...")
-try:
-    import numpy as np
-    test_frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-    
-    # Parse with MediaPipe backend
-    masks = parser_mp.parse(test_frame, target_resolution=(256, 192))
-    
-    # Verify all masks present
-    expected_keys = ['hair', 'face', 'neck', 'upper_body', 'arms', 'lower_body', 'full_parsing']
-    for key in expected_keys:
-        if key not in masks:
-            raise Exception(f"Missing mask: {key}")
-        if masks[key].shape != (480, 640):
-            raise Exception(f"Wrong shape for {key}: {masks[key].shape}")
-    
-    print(f"[OK] Parsing works with backend abstraction")
-    print(f"     All {len(expected_keys)} masks generated correctly")
-except Exception as e:
-    print(f"[FAIL] {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
 
-# Test 5: Verify backward compatibility
-print("\n[5/5] Testing backward compatibility...")
-try:
-    # Old API should still work (defaults to mediapipe)
-    parser_legacy = SemanticParser()  # No arguments
-    backend_name = parser_legacy.backend.__class__.__name__
-    print(f"[OK] Backward compatible - defaults to {backend_name}")
-    assert backend_name == 'MediaPipeBackend'
-except Exception as e:
-    print(f"[FAIL] {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
+def test_backend_package_scripts_cover_dev_runtime() -> None:
+    package_json = ROOT / "backend" / "package.json"
+    data = json.loads(package_json.read_text(encoding="utf-8"))
+    scripts = data.get("scripts", {})
 
-print("\n" + "=" * 70)
-print("[SUCCESS] Backend abstraction refactoring complete!")
-print("=" * 70)
-print("\nArchitecture summary:")
-print("  - ParsingBackend: Abstract interface")
-print("  - MediaPipeBackend: Current implementation (working)")
-print("  - ONNXParsingBackend: Future implementation (stub ready)")
-print("  - Auto-select: Tries ONNX first, falls back to MediaPipe")
-print("\nNext steps:")
-print("  1. Download/convert SCHP model to ONNX")
-print("  2. Place in models/schp_lip.onnx")
-print("  3. System will auto-select ONNX backend")
-print("  4. A/B test performance vs MediaPipe")
+    assert "start" in scripts
+    assert "start:dev" in scripts
+    assert scripts["start:dev"].strip() != ""
+
+
+def test_web_server_route_contract_is_present() -> None:
+    web_server = (ROOT / "web_server.py").read_text(encoding="utf-8")
+
+    assert "@app.route(\"/stream\")" in web_server
+    assert "@app.route(\"/api/state\")" in web_server
+    assert "@app.route(\"/api/params\", methods=[\"GET\"])" in web_server
+    assert "@app.route(\"/api/garments\")" in web_server
+    assert "@app.route(\"/api/garment\", methods=[\"POST\"])" in web_server
+
+
+def test_app_runtime_uses_web_server_wrapper() -> None:
+    app_text = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert "from web_server import WebServer" in app_text
+    assert "self.semantic_parser = None" in app_text
