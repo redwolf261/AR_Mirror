@@ -3,6 +3,7 @@ import './App.css';
 import VideoFeed from './components/VideoFeed';
 import MeasurementsPanel from './components/MeasurementsPanel';
 import Header from './components/Header';
+import config from './config';
 
 /**
  * AR Mirror - Apple-Inspired Body Tracking Interface
@@ -16,7 +17,7 @@ import Header from './components/Header';
 
 function App() {
   // Backend API configuration
-  const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5050';
+  const API_BASE = config.API_BASE_URL;
 
   // State management
   const [systemState, setSystemState] = useState({

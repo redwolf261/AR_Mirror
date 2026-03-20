@@ -101,9 +101,7 @@ class BodyAwareGarmentFitter:
         Extract body measurements from frame
         Returns dict with shoulder_width, torso_height, torso_box, body_mask
         """
-        print("[BODY_FITTER] extract_body_measurements called")
         h, w = frame.shape[:2]
-        print(f"[BODY_FITTER] Frame shape: {frame.shape}, dtype: {frame.dtype}")
         
         # Convert to RGB
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -117,10 +115,8 @@ class BodyAwareGarmentFitter:
         
         self.total_detections += 1
         t_detect = time.perf_counter()
-        print(f"[BODY_FITTER] About to call MediaPipe detect_for_video with timestamp: {timestamp_ms}")
         detection_result = self.detector.detect_for_video(mp_image, timestamp_ms)
         detect_ms = (time.perf_counter() - t_detect) * 1000
-        print(f"[BODY_FITTER] MediaPipe detection completed in {detect_ms:.1f}ms")
         if detect_ms > 10:  # Only log if significant
             logger.debug(f"[Pose] MediaPipe detection: {detect_ms:.1f}ms")
         
@@ -128,7 +124,6 @@ class BodyAwareGarmentFitter:
             self.consecutive_failures += 1
             self.last_detection_status = 'no_person'
             self.last_confidence = 0.0
-            print(f"[BODY_FITTER] No pose landmarks detected (consecutive failures: {self.consecutive_failures})")
             # Reset smoother state when person disappears
             if self.consecutive_failures > 10:
                 self.landmark_smoother.reset()
@@ -136,8 +131,6 @@ class BodyAwareGarmentFitter:
                 self._locked_measurements = None
             logger.debug(f"Pose detection failed (consecutive: {self.consecutive_failures})")
             return None
-
-        print(f"[BODY_FITTER] Pose landmarks detected: {len(detection_result.pose_landmarks)} poses")
         
         self.consecutive_failures = 0
         self.successful_detections += 1

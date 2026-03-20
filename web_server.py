@@ -23,6 +23,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -261,7 +262,20 @@ def _make_flask_app():
         return None
 
     app = Flask(__name__)
-    CORS(app)
+
+    # Configure CORS for both development and production
+    allowed_origins = [
+        "http://localhost:3000",           # React development server
+        "http://localhost:3001",           # Alternative React port
+        "https://*.vercel.app",           # Vercel deployments
+        "https://ar-mirror-ui.vercel.app", # Your specific Vercel app
+    ]
+
+    # Allow all origins in development, specific origins in production
+    if os.environ.get('FLASK_ENV') == 'development':
+        CORS(app)  # Allow all origins in development
+    else:
+        CORS(app, origins=allowed_origins)  # Restrict origins in production
 
     # ── MJPEG stream ──────────────────────────────────────────────
     def _gen_frames():
