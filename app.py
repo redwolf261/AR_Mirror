@@ -210,9 +210,36 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                 print("          Open the React UI at http://localhost:3001")
 
             print("[4/4] Opening webcam...")
-            self.cap = cv2.VideoCapture(0)
-            if not self.cap.isOpened():  # type: ignore
-                print("     [ERROR] Cannot open camera")
+            # Try different camera backends for better Windows compatibility
+            backends = [
+                ("DirectShow", cv2.CAP_DSHOW),
+                ("Media Foundation", cv2.CAP_MSMF),
+                ("Default", cv2.CAP_ANY)
+            ]
+
+            self.cap = None
+            for backend_name, backend_flag in backends:
+                print(f"     Trying {backend_name} backend...")
+                self.cap = cv2.VideoCapture(0, backend_flag)
+                if self.cap.isOpened():
+                    # Test if we can actually read frames
+                    ret, test_frame = self.cap.read()
+                    if ret:
+                        print(f"     [OK] {backend_name} backend working")
+                        break
+                    else:
+                        print(f"     [WARN] {backend_name} opened but no frames")
+                        self.cap.release()
+                        self.cap = None
+                else:
+                    print(f"     [WARN] {backend_name} backend failed to open")
+                    if self.cap:
+                        self.cap.release()
+                        self.cap = None
+
+            if not self.cap or not self.cap.isOpened():
+                print("     [ERROR] Cannot open camera with any backend")
+                print("     [TIP] Close other apps using camera (Edge, Teams, Zoom, etc.)")
                 return False
             
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)  # type: ignore
@@ -319,8 +346,17 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                 ret, frame = self.cap.read()  # type: ignore
                 if not ret:
                     consecutive_failures += 1
+                    if consecutive_failures == 10:  # First warning
+                        print(f"[WARN] Camera read failures: {consecutive_failures}/30")
+                        print("       This often means another app is using the camera")
+                        print("       Try closing: Edge browser tabs, Teams, Zoom, Skype, Discord")
+                    elif consecutive_failures == 20:  # Second warning
+                        print(f"[WARN] Camera read failures: {consecutive_failures}/30")
+                        print("       Check Windows Privacy Settings > Camera > Allow desktop apps")
                     if consecutive_failures > 30:  # ~1 second of failures
-                        logger.error("Camera read failed 30 times, exiting")
+                        print(f"[ERROR] Camera read failed {consecutive_failures} times, exiting")
+                        print("        Camera is likely being used by another application")
+                        print("        or blocked by Windows privacy settings")
                         break
                     time.sleep(0.033)  # Wait and retry
                     continue
@@ -329,6 +365,28 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                 try:
                     display_frame = cv2.flip(frame, 1)
                     garment = self.garments[self.current_garment_idx]
+
+                    # Extract body measurements (MISSING CODE - this is why size recommendations don't work!)
+                    print(f"[DEBUG] Frame {self.frame_count}: body_fitter available: {self.body_fitter is not None}")
+                    if self.body_fitter:
+                        try:
+                            print(f"[DEBUG] Calling body_fitter.extract_body_measurements...")
+                            body_measurements = self.body_fitter.extract_body_measurements(frame)
+                            print(f"[DEBUG] Body measurements result: {body_measurements is not None}")
+                            if body_measurements:
+                                self._cached_body_measurements = body_measurements
+                                print(f"[BODY] Extracted measurements: {list(body_measurements.keys())}")
+                                if body_measurements.get('size_recommendation'):
+                                    print(f"[SIZE] Recommended size: {body_measurements['size_recommendation']} "
+                                          f"(confidence: {body_measurements.get('size_confidence', 0):.2f})")
+                            else:
+                                print(f"[DEBUG] No body measurements extracted")
+                        except Exception as e:
+                            print(f"[BODY] Measurement extraction failed: {e}")
+                            import traceback
+                            traceback.print_exc()
+                    else:
+                        print(f"[DEBUG] No body_fitter available")
 
                     # Apply SKU bias correction to cached body measurements
                     if self._sku_corrector and self._cached_body_measurements:

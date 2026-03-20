@@ -1,0 +1,70 @@
+2026-03-20 09:35:36.893753: I tensorflow/core/util/port.cc:113] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-03-20 09:35:38.319282: I tensorflow/core/util/port.cc:113] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+\u2713 SessionLogger ready — logs \u2192 C:\Users\HP\Projects\AR Mirror\logs
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+W0000 00:00:1773979544.733108    4164 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1773979544.747077    1724 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+     [OK] Data flywheel session started: dd32a242-29bd-43ea-93fb-348f103090ae
+[WebServer] started \u2192 http://localhost:5050  |  stream: /stream
+
+================================================================================
+AR MIRROR - INITIALIZATION
+================================================================================
+
+[1/4] Initializing computer vision...
+     [WARN] MediaPipe pose detection not available (mask-only mode)
+[2/4] Initializing garment database...
+     [INFO] Loaded 10 garments from dataset/train/cloth
+     [OK] Found 10 garments
+     [OK] Loaded 10 dataset image pairs
+[3/4] Phase 2 unavailable — using Phase 0 (simple blending)
+[3.5/4] Loading Body-Aware Fitter...
+[OK] Body-aware fitter initialized
+     [OK] Body-aware fitting enabled!
+     [OK] Web UI available at http://localhost:5050
+          Open the React UI at http://localhost:3001
+[4/4] Opening webcam...
+ * Serving Flask app 'web_server'
+ * Debug mode: off
+Camera read failed 30 times, exiting
+     [OK] Camera open at 1280x720
+[5/5] Starting demo...
+     [OK] Ready to start [PHASE 0: ALPHA BLENDING]
+
+================================================================================
+STARTING LIVE AR MIRROR DEMO
+================================================================================
+
+Running for until stopped...
+Press 'q' to quit, arrows to change garments
+Press 'd' to toggle debug overlay (skeleton + detection status)
+Press 'o' to toggle info overlay
+
+
+
+================================================================================
+DEMO COMPLETE
+================================================================================
+
+PERFORMANCE METRICS:
+   Total Frames: 0
+   Duration: 1.02s
+   Average FPS: 0.0
+   Max FPS: 0.0
+   Min FPS: 0.0
+   Avg Latency: 0.0ms
+
+STATUS:
+   NEEDS OPTIMIZATION - 0.0 FPS
+
+SKIP-FRAME CONFIG:
+   Pose detection: every 2 frames
+   Semantic parsing: every 5 frames
+
+ROADMAP:
+   Phase 0 (Fallback): 30+ FPS
+   Phase 2 (Production): 20-27 FPS
+
+================================================================================
+

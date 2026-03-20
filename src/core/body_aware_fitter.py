@@ -101,7 +101,9 @@ class BodyAwareGarmentFitter:
         Extract body measurements from frame
         Returns dict with shoulder_width, torso_height, torso_box, body_mask
         """
+        print("[BODY_FITTER] extract_body_measurements called")
         h, w = frame.shape[:2]
+        print(f"[BODY_FITTER] Frame shape: {frame.shape}, dtype: {frame.dtype}")
         
         # Convert to RGB
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -115,8 +117,10 @@ class BodyAwareGarmentFitter:
         
         self.total_detections += 1
         t_detect = time.perf_counter()
+        print(f"[BODY_FITTER] About to call MediaPipe detect_for_video with timestamp: {timestamp_ms}")
         detection_result = self.detector.detect_for_video(mp_image, timestamp_ms)
         detect_ms = (time.perf_counter() - t_detect) * 1000
+        print(f"[BODY_FITTER] MediaPipe detection completed in {detect_ms:.1f}ms")
         if detect_ms > 10:  # Only log if significant
             logger.debug(f"[Pose] MediaPipe detection: {detect_ms:.1f}ms")
         
@@ -124,6 +128,7 @@ class BodyAwareGarmentFitter:
             self.consecutive_failures += 1
             self.last_detection_status = 'no_person'
             self.last_confidence = 0.0
+            print(f"[BODY_FITTER] No pose landmarks detected (consecutive failures: {self.consecutive_failures})")
             # Reset smoother state when person disappears
             if self.consecutive_failures > 10:
                 self.landmark_smoother.reset()
@@ -131,6 +136,8 @@ class BodyAwareGarmentFitter:
                 self._locked_measurements = None
             logger.debug(f"Pose detection failed (consecutive: {self.consecutive_failures})")
             return None
+
+        print(f"[BODY_FITTER] Pose landmarks detected: {len(detection_result.pose_landmarks)} poses")
         
         self.consecutive_failures = 0
         self.successful_detections += 1
@@ -189,13 +196,59 @@ class BodyAwareGarmentFitter:
             mask = detection_result.segmentation_masks[0].numpy_view()
             body_mask = (mask > 0.5).astype(np.uint8)
         
-        measurements = {
-            'shoulder_width': shoulder_width,
-            'torso_height': torso_height,
-            'torso_box': (torso_x1, torso_y1, torso_x2, torso_y2),
-            'body_mask': body_mask,
-            'landmarks': landmarks
-        }
+        # Import size recommendation system
+        try:
+            print(f"DEBUG: Starting size recommendation for measurements: shoulder_width={shoulder_width:.1f}, torso_height={torso_height:.1f}")
+            from src.core.size_recommendation import get_size_recommendation, format_size_recommendation
+
+            measurements = {
+                'shoulder_width': shoulder_width,
+                'torso_height': torso_height,
+                'torso_box': (torso_x1, torso_y1, torso_x2, torso_y2),
+                'body_mask': body_mask,
+                'landmarks': landmarks,
+                'confidence': avg_confidence
+            }
+
+            print(f"DEBUG: Calling get_size_recommendation...")
+            # Get size recommendation
+            size_rec = get_size_recommendation(measurements)
+            print(f"DEBUG: Size recommendation result: {size_rec['recommended_size']} (confidence: {size_rec['confidence']:.2f})")
+
+            measurements.update({
+                'size_recommendation': size_rec['recommended_size'],
+                'size_confidence': size_rec['confidence'],
+                'size_alternatives': size_rec['all_sizes'],
+                'measurements_cm': size_rec['measurements_cm'],
+                'size_description': format_size_recommendation(size_rec)
+            })
+
+            # Add individual cm measurements for compatibility
+            measurements.update({
+                'shoulder_width_cm': size_rec['measurements_cm']['shoulder_width'],
+                'chest_cm': size_rec['measurements_cm']['chest_width'],
+                'torso_length_cm': size_rec['measurements_cm']['torso_length']
+            })
+
+            print(f"DEBUG: Final measurements with size data: size={measurements.get('size_recommendation')}")
+
+        except Exception as e:
+            # Fallback if size recommendation fails
+            print(f"DEBUG: Size recommendation FAILED with error: {e}")
+            import traceback
+            traceback.print_exc()
+            logger.debug(f"Size recommendation failed: {e}")
+            measurements = {
+                'shoulder_width': shoulder_width,
+                'torso_height': torso_height,
+                'torso_box': (torso_x1, torso_y1, torso_x2, torso_y2),
+                'body_mask': body_mask,
+                'landmarks': landmarks,
+                'confidence': avg_confidence,
+                'size_recommendation': 'M',  # Default fallback
+                'size_confidence': 0.5,
+                'size_description': 'Size estimation unavailable'
+            }
         
         # Phase B3: Static pose lock
         last_disp = self.landmark_logger.get_last_displacement()
@@ -209,12 +262,41 @@ class BodyAwareGarmentFitter:
             if self._locked_measurements is not None:
                 # Update body_mask from current frame (it changes with lighting)
                 self._locked_measurements['body_mask'] = body_mask
+
+                # IMPORTANT: Also update size recommendation in cached measurements
+                # In case the user's distance/pose has changed slightly
+                try:
+                    if ('size_recommendation' not in self._locked_measurements or
+                        'size_confidence' not in self._locked_measurements):
+                        # Recalculate size recommendation for cached measurements
+                        from src.core.size_recommendation import get_size_recommendation, format_size_recommendation
+                        size_rec = get_size_recommendation(self._locked_measurements)
+                        self._locked_measurements.update({
+                            'size_recommendation': size_rec['recommended_size'],
+                            'size_confidence': size_rec['confidence'],
+                            'size_alternatives': size_rec['all_sizes'],
+                            'measurements_cm': size_rec['measurements_cm'],
+                            'size_description': format_size_recommendation(size_rec),
+                            'shoulder_width_cm': size_rec['measurements_cm']['shoulder_width'],
+                            'chest_cm': size_rec['measurements_cm']['chest_width'],
+                            'torso_length_cm': size_rec['measurements_cm']['torso_length']
+                        })
+                except Exception as e:
+                    logger.debug(f"Size recommendation update failed in cache: {e}")
+                    # Ensure fallback values exist
+                    if 'size_recommendation' not in self._locked_measurements:
+                        self._locked_measurements.update({
+                            'size_recommendation': 'M',
+                            'size_confidence': 0.5,
+                            'size_description': 'Size estimation unavailable'
+                        })
+
                 return self._locked_measurements
             else:
-                # First lock — cache current measurements
+                # First lock — cache current measurements (with size data)
                 self._locked_measurements = measurements
         else:
-            # Moving — update cache
+            # Moving — update cache (with size data)
             self._locked_measurements = measurements
         
         return measurements

@@ -1,6 +1,5 @@
 import React from 'react';
 import MetricCard from './MetricCard';
-import GarmentSelector from './GarmentSelector';
 import Controls from './Controls';
 
 /**
@@ -63,21 +62,83 @@ const MeasurementsPanel = ({
           </div>
         )}
 
-        {/* fit size indicator */}
-        {measurements && measurements.size && (
-          <div
-            style={{
-              marginTop: '16px',
-              padding: '12px 16px',
-              background: 'rgba(0, 113, 227, 0.08)',
-              borderRadius: '12px',
-              fontSize: '13px',
-              fontWeight: 500,
-              color: '#0071e3',
-              textAlign: 'center',
-            }}
-          >
-            Recommended Size: {measurements.size}
+        {/* Size Recommendation */}
+        {measurements && measurements.size_recommendation && (
+          <div style={{
+            marginTop: '16px',
+            padding: '16px',
+            background: 'rgba(0, 113, 227, 0.08)',
+            borderRadius: '12px',
+            border: '1px solid rgba(0, 113, 227, 0.15)'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: '8px'
+            }}>
+              <span style={{
+                fontSize: '15px',
+                fontWeight: 600,
+                color: '#0071e3',
+              }}>
+                Size {measurements.size_recommendation}
+              </span>
+              <span style={{
+                fontSize: '12px',
+                color: '#86868b',
+                fontWeight: 500
+              }}>
+                {measurements.size_confidence}% match
+              </span>
+            </div>
+
+            {measurements.size_description && (
+              <div style={{
+                fontSize: '12px',
+                color: '#515154',
+                lineHeight: '1.4',
+                whiteSpace: 'pre-line'
+              }}>
+                {measurements.size_description.split('\n')[1]} {/* Skip first line, show measurements */}
+              </div>
+            )}
+
+            {/* Alternative sizes */}
+            {measurements.size_alternatives && Object.keys(measurements.size_alternatives).length > 1 && (
+              <div style={{ marginTop: '12px' }}>
+                <div style={{
+                  fontSize: '11px',
+                  color: '#86868b',
+                  marginBottom: '6px',
+                  fontWeight: 500
+                }}>
+                  Other sizes:
+                </div>
+                <div style={{
+                  display: 'flex',
+                  gap: '6px',
+                  flexWrap: 'wrap'
+                }}>
+                  {Object.entries(measurements.size_alternatives)
+                    .filter(([size]) => size !== measurements.size_recommendation)
+                    .sort(([,a], [,b]) => b - a)
+                    .slice(0, 3)
+                    .map(([size, score]) => (
+                      <span key={size} style={{
+                        padding: '4px 8px',
+                        background: score > 0.6 ? 'rgba(52, 199, 89, 0.1)' : 'rgba(142, 142, 147, 0.1)',
+                        color: score > 0.6 ? '#34c759' : '#8e8e93',
+                        borderRadius: '6px',
+                        fontSize: '11px',
+                        fontWeight: 500
+                      }}>
+                        {size} ({Math.round(score * 100)}%)
+                      </span>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -92,15 +153,66 @@ const MeasurementsPanel = ({
         </div>
       </div>
 
-      {/* Garment Selection - HIDDEN FOR NOW */}
-      {false && garments && garments.length > 0 && (
+      {/* Garment Selection - NOW ENABLED */}
+      {garments && garments.length > 0 && (
         <div className="panel-section">
           <h3 className="panel-title">Garments</h3>
-          <GarmentSelector
-            garments={garments}
-            selected={selectedGarment}
-            onSelect={onGarmentChange}
-          />
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, 1fr)',
+            gap: '8px',
+            marginBottom: '12px'
+          }}>
+            {garments.slice(0, 6).map((garment, index) => (
+              <button
+                key={`garment-${index}`}
+                onClick={() => onGarmentChange && onGarmentChange(index)}
+                style={{
+                  padding: '12px',
+                  border: selectedGarment === index
+                    ? '2px solid #0071e3'
+                    : '1px solid rgba(134, 134, 139, 0.3)',
+                  borderRadius: '8px',
+                  background: selectedGarment === index
+                    ? 'rgba(0, 113, 227, 0.08)'
+                    : '#f5f5f7',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                  fontWeight: selectedGarment === index ? 600 : 400,
+                  color: selectedGarment === index ? '#0071e3' : '#1d1d1f',
+                  transition: 'all 0.2s ease',
+                  textAlign: 'center'
+                }}
+                onMouseOver={(e) => {
+                  if (selectedGarment !== index) {
+                    e.target.style.background = '#e8e8ed'
+                    e.target.style.borderColor = 'rgba(134, 134, 139, 0.5)'
+                  }
+                }}
+                onMouseOut={(e) => {
+                  if (selectedGarment !== index) {
+                    e.target.style.background = '#f5f5f7'
+                    e.target.style.borderColor = 'rgba(134, 134, 139, 0.3)'
+                  }
+                }}
+              >
+                {garment.name || `Garment ${index + 1}`}
+              </button>
+            ))}
+          </div>
+
+          {/* Quick try-on instructions */}
+          <div style={{
+            padding: '12px',
+            background: 'rgba(142, 142, 147, 0.08)',
+            borderRadius: '8px',
+            fontSize: '11px',
+            color: '#86868b',
+            textAlign: 'center',
+            lineHeight: '1.4'
+          }}>
+            📍 Stand 1.5-2m from camera for best fit
+          </div>
         </div>
       )}
 

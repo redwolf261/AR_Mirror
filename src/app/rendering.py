@@ -373,8 +373,22 @@ class GarmentRenderer:
                     interpolation=cv2.INTER_LINEAR
                 )
             garment_alpha = np.clip(garment_alpha, 0.0, 1.0)
-            # Feather garment edges slightly
-            garment_alpha = cv2.GaussianBlur(garment_alpha, (5, 5), sigmaX=2, sigmaY=2)
+
+            # Enhanced edge anti-aliasing for smoother garment edges
+            # Apply a multi-pass blur for natural looking edges
+            garment_alpha_smooth = garment_alpha.copy()
+
+            # Step 1: Light blur for immediate edge softening
+            garment_alpha_smooth = cv2.GaussianBlur(garment_alpha_smooth, (3, 3), sigmaX=1, sigmaY=1)
+
+            # Step 2: Selective blur on edge regions only to preserve interior details
+            edge_mask = cv2.Canny((garment_alpha * 255).astype(np.uint8), 50, 150)
+            edge_mask_dilated = cv2.dilate(edge_mask, np.ones((5, 5), np.uint8), iterations=1)
+            edge_region = (edge_mask_dilated > 0).astype(np.float32)
+
+            # Apply stronger blur only to edge regions
+            alpha_heavy_blur = cv2.GaussianBlur(garment_alpha, (7, 7), sigmaX=3, sigmaY=3)
+            garment_alpha = garment_alpha_smooth * (1 - edge_region) + alpha_heavy_blur * edge_region
 
             # ── Alpha layer 2: body silhouette (clip garment to body) ────────
             if body_mask is not None:
@@ -401,9 +415,34 @@ class GarmentRenderer:
             if frame_roi.size == 0:
                 return None
             
-            # Direct alpha composite
+            # Enhanced alpha composite with subtle shading
             frame_roi_rgb = cv2.cvtColor(frame_roi, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-            composite = warped_cloth_final * warped_mask_3d + frame_roi_rgb * (1 - warped_mask_3d)
+
+            # Add subtle shading effect based on body contours
+            if body_mask is not None:
+                # Create depth-like shading from body mask gradients
+                bm_roi = body_mask[garment_y1:garment_y2, garment_x1:garment_x2].astype(np.float32)
+                if bm_roi.shape == composite_alpha.shape:
+                    # Calculate gradients to simulate depth/curvature
+                    grad_x = cv2.Sobel(bm_roi, cv2.CV_64F, 1, 0, ksize=3)
+                    grad_y = cv2.Sobel(bm_roi, cv2.CV_64F, 0, 1, ksize=3)
+                    gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+                    gradient_magnitude = np.clip(gradient_magnitude / gradient_magnitude.max(), 0, 1)
+
+                    # Create subtle shadow/highlight effect
+                    shadow_strength = 0.15  # Adjust for subtlety
+                    shading = 1.0 - gradient_magnitude * shadow_strength
+                    shading = np.expand_dims(shading, axis=-1)
+
+                    # Apply shading to garment
+                    warped_cloth_shaded = warped_cloth_final * shading
+                else:
+                    warped_cloth_shaded = warped_cloth_final
+            else:
+                warped_cloth_shaded = warped_cloth_final
+
+            # Composite with improved blending
+            composite = warped_cloth_shaded * warped_mask_3d + frame_roi_rgb * (1 - warped_mask_3d)
 
             # ── Hand occlusion ────────────────────────────────────
             # Where hand_mask = 1 (hand / forearm region), restore original
