@@ -1,11 +1,20 @@
-# AR Mirror - Vercel Deployment Guide
+# AR Mirror - Cloud Deployment Guide
 
-## 🚀 **Deployment Architecture**
+## 🚀 **Deployment Architecture Options**
 
-### **Frontend (React) → Vercel ✅**
-### **Backend (Python ML) → Railway/Render ⚡**
+### **Frontend (React) → Vercel ✅ or Netlify ✅**
+### **Backend (Python ML) → Railway/Render/Heroku ⚡**
 
-## 📋 **Step 1: Frontend to Vercel**
+## 📋 **Step 1: Frontend Deployment**
+
+Choose your preferred frontend platform:
+
+### **Option A: Deploy to Vercel**
+### **Option B: Deploy to Netlify**
+
+---
+
+## 🌐 **Option A: Frontend to Vercel**
 
 ### **1.1 Prepare Frontend for Production**
 
@@ -69,6 +78,59 @@ vercel
 # - In which directory is your code located? ./
 ```
 
+---
+
+## 🟦 **Option B: Frontend to Netlify**
+
+### **B.1 Prepare Frontend for Netlify**
+
+Frontend is already configured with `netlify.toml` file.
+
+### **B.2 Deploy to Netlify**
+
+**Method 1: GitHub Integration (Recommended)**
+```bash
+# Push to GitHub first (if not done already)
+git add .
+git commit -m "Prepare frontend for Netlify deployment"
+git push origin main
+
+# Then connect to Netlify:
+# 1. Go to netlify.com
+# 2. New site from Git → Connect GitHub
+# 3. Select your AR_Mirror repository
+# 4. Set base directory: frontend/ar-mirror-ui
+# 5. Build command: npm run build
+# 6. Publish directory: build
+# 7. Deploy!
+```
+
+**Method 2: Netlify CLI**
+```bash
+# Install Netlify CLI
+npm install -g netlify-cli
+
+# Login and deploy
+cd "frontend/ar-mirror-ui"
+netlify login
+netlify init
+netlify deploy --prod --dir=build
+
+# Follow prompts:
+# - Create & configure a new site
+# - Choose your team
+# - Site name: ar-mirror-ui (or custom name)
+```
+
+**Method 3: Drag & Drop**
+```bash
+# Build the project locally
+cd "frontend/ar-mirror-ui"
+npm run build
+
+# Then drag the 'build' folder to netlify.com/drop
+```
+
 ## 🐍 **Step 2: Backend Deployment Options**
 
 ### **Option A: Railway (Recommended for ML apps)**
@@ -120,30 +182,43 @@ git push heroku main
 ## 🔗 **Step 3: Connect Frontend to Backend**
 
 ### **3.1 Set Environment Variable**
-In your Vercel project settings:
+
+**For Vercel:**
+- Go to your Vercel project settings
 - Add environment variable: `REACT_APP_API_URL`
 - Value: `https://your-backend-url.railway.app`
 
-### **3.2 Update CORS in Backend**
-Add your Vercel URL to CORS settings in `web_server.py`:
-```python
-from flask_cors import CORS
+**For Netlify:**
+- Go to your Netlify site settings
+- Build & Deploy → Environment variables
+- Add: `REACT_APP_API_URL` = `https://your-backend-url.railway.app`
 
-app = Flask(__name__)
-CORS(app, origins=[
-    "http://localhost:3000",
-    "https://your-app-name.vercel.app"
-])
+### **3.2 Update CORS in Backend**
+Add your deployment URL to CORS settings (already configured in `web_server.py`):
+```python
+allowed_origins = [
+    "http://localhost:3000",           # Local development
+    "https://*.vercel.app",           # All Vercel deployments
+    "https://*.netlify.app",          # All Netlify deployments
+    "https://your-app.vercel.app",    # Your specific Vercel URL
+    "https://your-app.netlify.app",   # Your specific Netlify URL
+]
 ```
 
 ## 🌐 **Step 4: Final URLs**
 
 After deployment:
-- **Frontend**: `https://your-app-name.vercel.app`
-- **Backend**: `https://your-backend.railway.app`
+**Vercel Option:**
+- Frontend: `https://your-app-name.vercel.app`
+- Backend: `https://your-backend.railway.app`
+
+**Netlify Option:**
+- Frontend: `https://your-app-name.netlify.app`
+- Backend: `https://your-backend.railway.app`
 
 ## ⚡ **Quick Deploy Commands**
 
+**Vercel Path:**
 ```bash
 # 1. Frontend to Vercel
 cd "frontend/ar-mirror-ui"
@@ -151,9 +226,16 @@ vercel --prod
 
 # 2. Backend to Railway
 railway up
+```
 
-# 3. Update environment
-# Set REACT_APP_API_URL in Vercel dashboard
+**Netlify Path:**
+```bash
+# 1. Frontend to Netlify
+cd "frontend/ar-mirror-ui"
+netlify deploy --prod --dir=build
+
+# 2. Backend to Railway
+railway up
 ```
 
 ## 🔧 **Important Notes**
@@ -165,9 +247,29 @@ railway up
 - **Consider using smaller models** for cloud deployment
 
 ### **Frontend Considerations:**
-- **Build optimization** is automatic on Vercel
+- **Build optimization** is automatic on both platforms
 - **Environment variables** are injected at build time
 - **API proxy** handled through configuration
+- **Both platforms** offer excellent performance and CDN
+
+## 🆚 **Vercel vs Netlify Comparison**
+
+| Feature | Vercel | Netlify |
+|---------|--------|---------|
+| **Deployment** | GitHub integration ✅ | GitHub integration ✅ |
+| **Build Time** | Fast ⚡ | Fast ⚡ |
+| **Free Tier** | 100GB bandwidth | 100GB bandwidth |
+| **Environment Variables** | ✅ Easy setup | ✅ Easy setup |
+| **Custom Domains** | ✅ Free HTTPS | ✅ Free HTTPS |
+| **Form Handling** | ❌ Not included | ✅ Built-in forms |
+| **Functions** | ✅ Edge Functions | ✅ Netlify Functions |
+| **Analytics** | ✅ Built-in | ✅ Built-in |
+| **Deploy Previews** | ✅ PR previews | ✅ Branch previews |
+| **CLI** | ✅ Excellent | ✅ Excellent |
+
+**Recommendation:** Both are excellent! Choose based on:
+- **Vercel**: If you prefer Vercel's developer experience
+- **Netlify**: If you need form handling or prefer Netlify's features
 
 ## 🚨 **Limitations & Alternatives**
 
@@ -184,7 +286,11 @@ Deploy a simplified version using:
 
 ## 📊 **Cost Estimates**
 
-- **Vercel**: Free tier covers most frontend needs
+### **Frontend (Choose One):**
+- **Vercel**: Free tier (100GB bandwidth/month)
+- **Netlify**: Free tier (100GB bandwidth/month)
+
+### **Backend:**
 - **Railway**: ~$5/month for basic backend
 - **Render**: Free tier available, ~$7/month for production
 - **Heroku**: ~$7/month (no free tier anymore)

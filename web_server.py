@@ -268,7 +268,9 @@ def _make_flask_app():
         "http://localhost:3000",           # React development server
         "http://localhost:3001",           # Alternative React port
         "https://*.vercel.app",           # Vercel deployments
+        "https://*.netlify.app",          # Netlify deployments
         "https://ar-mirror-ui.vercel.app", # Your specific Vercel app
+        "https://ar-mirror-ui.netlify.app", # Your specific Netlify app
     ]
 
     # Allow all origins in development, specific origins in production
