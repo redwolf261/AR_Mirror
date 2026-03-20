@@ -1,0 +1,24 @@
+# Ignore Python files and dependencies
+*.py
+requirements*.txt
+Procfile
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+*.so
+.coverage
+.pytest_cache/
+
+# Ignore backend directories
+src/
+models/
+dataset/
+logs/
+backend/
+
+# Ignore other non-frontend files
+*.sh
+.git/
+.gitignore
