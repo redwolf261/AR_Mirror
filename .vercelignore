@@ -1,0 +1,15 @@
+# Ignore Python files and backend
+*.py
+requirements*.txt
+Procfile
+*.pyc
+__pycache__/
+src/
+models/
+dataset/
+logs/
+backend/
+*.sh
+
+# Keep only frontend
+!frontend/

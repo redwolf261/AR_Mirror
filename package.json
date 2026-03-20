@@ -1,0 +1,11 @@
+{
+  "name": "ar-mirror",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "cd frontend/ar-mirror-ui && npm install && npm run build",
+    "start": "cd frontend/ar-mirror-ui && npm start",
+    "install": "cd frontend/ar-mirror-ui && npm install"
+  },
+  "keywords": ["ar", "mirror", "react", "frontend"],
+  "description": "AR Mirror - Virtual Try-On Application Frontend"
+}
