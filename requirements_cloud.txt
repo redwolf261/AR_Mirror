@@ -1,0 +1,22 @@
+# AR Mirror - Cloud Deployment Requirements (Optimized for free tiers)
+# Minimal dependencies for Render.com free tier
+
+# Core web framework
+flask>=2.0.0
+flask-cors>=3.0.0
+
+# Image processing (lightweight)
+opencv-python-headless>=4.5.0  # Headless version for cloud
+Pillow>=8.0.0
+numpy>=1.21.0
+
+# Body detection (lightweight)
+mediapipe>=0.8.0
+
+# Optional: For better performance (if memory allows)
+# scipy>=1.7.0
+
+# Don't include heavy ML dependencies on free tier:
+# tensorflow - too heavy for 512MB RAM
+# torch - too heavy for free tier
+# onnxruntime-gpu - not needed without GPU
