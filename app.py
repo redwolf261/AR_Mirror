@@ -49,6 +49,13 @@ except Exception as e:
 from src.app.rendering import GarmentRenderer, load_viton_cloth
 from src.app.overlay import OverlayRenderer
 
+# Import skeleton drawing for web stream
+try:
+    from tryon_selector import draw_skeleton_overlay
+    SKELETON_DRAW_AVAILABLE = True
+except Exception:
+    SKELETON_DRAW_AVAILABLE = False
+
 # Web UI server
 try:
     from web_server import WebServer as _WebServer
@@ -305,12 +312,19 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
         demo_end_time = time.time() + (self.demo_duration if not _infinite else 1e18)
         
         try:
+            consecutive_failures = 0
             while time.time() < demo_end_time:
                 frame_start = time.time()
-                
+
                 ret, frame = self.cap.read()  # type: ignore
                 if not ret:
-                    break
+                    consecutive_failures += 1
+                    if consecutive_failures > 30:  # ~1 second of failures
+                        logger.error("Camera read failed 30 times, exiting")
+                        break
+                    time.sleep(0.033)  # Wait and retry
+                    continue
+                consecutive_failures = 0  # Reset on success
                 
                 try:
                     display_frame = cv2.flip(frame, 1)
@@ -368,8 +382,8 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                 except Exception as e:
                     logger.warning(f"Render error: {e}")
                     output_frame = frame
-                
-                # Push frame and state to WebUI (before overlay bakes in text)
+
+                # Push frame and state to WebUI
                 if self._web_server:
                     try:
                         _ws_fps = 1.0 / np.mean(list(self.frame_times)) if self.frame_times else 0.0
@@ -377,7 +391,16 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                             "file", self.garments[self.current_garment_idx].get("name", "")
                         )
                         _ws_meas = self._cached_body_measurements
-                        self._web_server.push_frame(output_frame)
+
+                        # Draw skeleton overlay on web stream frame
+                        web_frame = output_frame.copy()
+                        if SKELETON_DRAW_AVAILABLE and _ws_meas:
+                            try:
+                                draw_skeleton_overlay(web_frame, _ws_meas)
+                            except Exception:
+                                pass
+
+                        self._web_server.push_frame(web_frame)
                         self._web_server.push_state(_ws_fps, _ws_gname, _ws_meas)
                     except Exception:
                         pass
@@ -387,38 +410,43 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                     display_frame = self._draw_overlay(output_frame, None)
                 else:
                     display_frame = output_frame
-                
-                # Show frame
-                cv2.imshow("AR MIRROR", display_frame)
-                
+
+                # Show frame (skip in headless mode)
+                if not getattr(self, 'headless', False):
+                    cv2.imshow("AR MIRROR", display_frame)
+
                 # Record timing
                 frame_time = time.time() - frame_start
                 self.frame_times.append(frame_time)
                 self.frame_count += 1
-                
-                # Handle keyboard
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    break
-                elif key == ord('o'):
-                    self.show_overlay = not self.show_overlay
-                elif key == ord('d'):
-                    self.show_debug = not self.show_debug
-                    print(f"\nDebug overlay: {'ON' if self.show_debug else 'OFF'}")
-                elif key == 261 or key == ord('\t'):  # Right arrow or Tab
-                    if self.dataset_pairs:
-                        self.current_garment_idx = (self.current_garment_idx + 1) % len(self.dataset_pairs)
-                    else:
-                        self.current_garment_idx = (self.current_garment_idx + 1) % len(self.garments)
-                    print(f"\nSwitched to garment #{self.current_garment_idx + 1}")
-                    self._on_garment_change()
-                elif key == 260:  # Left arrow
-                    if self.dataset_pairs:
-                        self.current_garment_idx = (self.current_garment_idx - 1) % len(self.dataset_pairs)
-                    else:
-                        self.current_garment_idx = (self.current_garment_idx - 1) % len(self.garments)
-                    print(f"\nSwitched to garment #{self.current_garment_idx + 1}")
-                    self._on_garment_change()
+
+                # Handle keyboard (skip in headless mode)
+                if getattr(self, 'headless', False):
+                    # In headless mode, just sleep briefly to control frame rate
+                    time.sleep(0.033)  # ~30 FPS cap
+                else:
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        break
+                    elif key == ord('o'):
+                        self.show_overlay = not self.show_overlay
+                    elif key == ord('d'):
+                        self.show_debug = not self.show_debug
+                        print(f"\nDebug overlay: {'ON' if self.show_debug else 'OFF'}")
+                    elif key == 261 or key == ord('\t'):  # Right arrow or Tab
+                        if self.dataset_pairs:
+                            self.current_garment_idx = (self.current_garment_idx + 1) % len(self.dataset_pairs)
+                        else:
+                            self.current_garment_idx = (self.current_garment_idx + 1) % len(self.garments)
+                        print(f"\nSwitched to garment #{self.current_garment_idx + 1}")
+                        self._on_garment_change()
+                    elif key == 260:  # Left arrow
+                        if self.dataset_pairs:
+                            self.current_garment_idx = (self.current_garment_idx - 1) % len(self.dataset_pairs)
+                        else:
+                            self.current_garment_idx = (self.current_garment_idx - 1) % len(self.garments)
+                        print(f"\nSwitched to garment #{self.current_garment_idx + 1}")
+                        self._on_garment_change()
                 
                 # Print progress
                 if self.frame_count % 10 == 0:
@@ -429,7 +457,7 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                         bar = "[" + "=" * progress + " " * (50 - progress) + "]"
                         print(f"\r {bar} {elapsed:.0f}s/{self.demo_duration}s | FPS: {avg_fps:.1f}", end="", flush=True)
                     else:
-                        print(f"\r  ∞  {elapsed:.0f}s elapsed | FPS: {avg_fps:.1f}", end="", flush=True)
+                        print(f"\r  [{elapsed:.0f}s] elapsed | FPS: {avg_fps:.1f}", end="", flush=True)
         
         except KeyboardInterrupt:
             pass
@@ -557,14 +585,17 @@ Examples:
                         help='Target FPS (default: 30)')
     parser.add_argument('--duration', type=int, default=120,
                         help='Demo duration in seconds (default: 120)')
-    
+    parser.add_argument('--headless', action='store_true',
+                        help='Run without display window (web server only)')
+
     args = parser.parse_args()
-    
+
     app = ARMirrorApp(
         target_fps=args.fps,
         demo_duration=args.duration,
         phase=args.phase
     )
+    app.headless = getattr(args, 'headless', False)
     
     if app.initialize():
         app.run()

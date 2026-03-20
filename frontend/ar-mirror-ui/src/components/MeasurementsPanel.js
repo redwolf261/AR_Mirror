@@ -92,8 +92,8 @@ const MeasurementsPanel = ({
         </div>
       </div>
 
-      {/* Garment Selection */}
-      {garments && garments.length > 0 && (
+      {/* Garment Selection - HIDDEN FOR NOW */}
+      {false && garments && garments.length > 0 && (
         <div className="panel-section">
           <h3 className="panel-title">Garments</h3>
           <GarmentSelector

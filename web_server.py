@@ -138,16 +138,32 @@ def push_state(fps: float, garment: str, meas: Optional[dict]) -> None:
         def _s(v):
             if isinstance(v, (int, float)):  return round(float(v), 2)
             return None
+
+        # Convert pixel measurements to approximate cm
+        # At typical webcam distance (~1.5m), shoulder width of ~45cm appears as ~300px
+        # So conversion: cm = pixels * 0.15
+        px_to_cm = 0.15  # Approximate conversion factor
+
+        shoulder_px = meas.get("shoulder_width", 0) or 0
+        torso_px = meas.get("torso_height", 0) or 0
+
+        # Debug: log raw values periodically
+        if shoulder_px > 10:
+            log.info(f"[BODY] shoulder_px={shoulder_px:.1f}, torso_px={torso_px:.1f}")
+
         state["measurements"] = {
-            "shoulder_cm": _s(meas.get("shoulder_cm")),
-            "chest_cm":    _s(meas.get("chest_cm")),
-            "waist_cm":    _s(meas.get("waist_cm")),
-            "torso_cm":    _s(meas.get("torso_cm")),
+            "shoulder_cm": _s(shoulder_px * px_to_cm) if shoulder_px > 0 else None,
+            "chest_cm":    _s(shoulder_px * 0.9 * px_to_cm) if shoulder_px > 0 else None,
+            "waist_cm":    _s(shoulder_px * 0.75 * px_to_cm) if shoulder_px > 0 else None,
+            "torso_cm":    _s(torso_px * px_to_cm) if torso_px > 0 else None,
             "size":        meas.get("size"),
         }
         tb = meas.get("torso_box")
         if tb:
             state["torso_box"] = list(tb)
+        # Include landmarks for skeleton drawing
+        if meas.get("landmarks"):
+            state["has_landmarks"] = True
     with _state_lock:
         _state.clear()
         _state.update(state)
