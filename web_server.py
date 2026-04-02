@@ -85,6 +85,64 @@ _garment_callback = None
 # garment list provider
 _garment_list_fn = None
 
+_fitengine_lock = threading.Lock()
+_fitengine_session: Dict[str, Any] = {
+    "active": False,
+    "session_id": None,
+    "step": "idle",
+    "height_cm": None,
+    "front_captured": False,
+    "side_captured": False,
+    "front_snapshot": None,
+    "side_snapshot": None,
+    "result": None,
+    "warnings": [],
+    "updated_at": time.time(),
+}
+
+
+def _is_measurement_ready(state: Dict[str, Any]) -> bool:
+    meas = state.get("measurements") or {}
+    if not state.get("has_landmarks"):
+        return False
+    return all(meas.get(k) is not None for k in ("shoulder_cm", "chest_cm", "torso_cm"))
+
+
+def _measurement_snapshot(state: Dict[str, Any]) -> Dict[str, Any]:
+    meas = state.get("measurements") or {}
+    return {
+        "ts": time.time(),
+        "measurements": {
+            "shoulder_cm": meas.get("precise_shoulder_cm") or meas.get("shoulder_cm"),
+            "chest_cm": meas.get("precise_chest_cm") or meas.get("chest_cm"),
+            "torso_cm": meas.get("precise_torso_cm") or meas.get("torso_cm"),
+            "waist_cm": meas.get("waist_cm"),
+            "size_recommendation": meas.get("size_recommendation"),
+            "size_confidence": meas.get("size_confidence"),
+        },
+    }
+
+
+def _build_fitengine_view(state: Dict[str, Any]) -> Dict[str, Any]:
+    with _fitengine_lock:
+        session = dict(_fitengine_session)
+
+    ready = _is_measurement_ready(state)
+    warnings = list(session.get("warnings") or [])
+    if session.get("active") and not ready:
+        warnings.append("Hold a stable full upper-body pose in frame.")
+
+    return {
+        "session": session,
+        "readiness": {
+            "measurement_ready": ready,
+            "can_capture_front": bool(session.get("active") and session.get("step") == "front" and ready),
+            "can_capture_side": bool(session.get("active") and session.get("step") == "side" and ready),
+            "can_finalize": bool(session.get("active") and session.get("front_captured") and session.get("side_captured")),
+        },
+        "warnings": warnings,
+    }
+
 
 def get_param(key: str) -> Any:
     with _params_lock:
@@ -249,6 +307,89 @@ def patch_state(updates: Dict[str, Any]) -> None:
         _state.update(updates)
 
 
+def _start_fitengine_session(height_cm: float) -> Dict[str, Any]:
+    session_id = f"fit-{int(time.time() * 1000)}"
+    with _fitengine_lock:
+        _fitengine_session.update({
+            "active": True,
+            "session_id": session_id,
+            "step": "front",
+            "height_cm": float(height_cm),
+            "front_captured": False,
+            "side_captured": False,
+            "front_snapshot": None,
+            "side_snapshot": None,
+            "result": None,
+            "warnings": [],
+            "updated_at": time.time(),
+        })
+        return dict(_fitengine_session)
+
+
+def _reset_fitengine_session() -> Dict[str, Any]:
+    with _fitengine_lock:
+        _fitengine_session.update({
+            "active": False,
+            "session_id": None,
+            "step": "idle",
+            "height_cm": None,
+            "front_captured": False,
+            "side_captured": False,
+            "front_snapshot": None,
+            "side_snapshot": None,
+            "result": None,
+            "warnings": [],
+            "updated_at": time.time(),
+        })
+        return dict(_fitengine_session)
+
+
+def _capture_fitengine_step(step: str, state: Dict[str, Any]) -> tuple[bool, Dict[str, Any], Optional[str]]:
+    ready = _is_measurement_ready(state)
+    with _fitengine_lock:
+        if not _fitengine_session.get("active"):
+            return False, dict(_fitengine_session), "No active FitEngine session"
+        if _fitengine_session.get("step") != step:
+            return False, dict(_fitengine_session), f"Current step is '{_fitengine_session.get('step')}'"
+        if not ready:
+            return False, dict(_fitengine_session), "Measurement signal is not stable yet"
+
+        snap = _measurement_snapshot(state)
+        if step == "front":
+            _fitengine_session["front_captured"] = True
+            _fitengine_session["front_snapshot"] = snap
+            _fitengine_session["step"] = "side"
+        else:
+            _fitengine_session["side_captured"] = True
+            _fitengine_session["side_snapshot"] = snap
+            _fitengine_session["step"] = "review"
+
+        _fitengine_session["updated_at"] = time.time()
+        return True, dict(_fitengine_session), None
+
+
+def _finalize_fitengine_session(state: Dict[str, Any]) -> tuple[bool, Dict[str, Any], Optional[str]]:
+    with _fitengine_lock:
+        if not _fitengine_session.get("active"):
+            return False, dict(_fitengine_session), "No active FitEngine session"
+        if not (_fitengine_session.get("front_captured") and _fitengine_session.get("side_captured")):
+            return False, dict(_fitengine_session), "Front and side captures are required"
+
+        meas = state.get("measurements") or {}
+        _fitengine_session["result"] = {
+            "recommended_size": meas.get("size_recommendation") or "M",
+            "confidence": meas.get("size_confidence") or 0,
+            "chest_cm": meas.get("precise_chest_cm") or meas.get("chest_cm"),
+            "shoulder_cm": meas.get("precise_shoulder_cm") or meas.get("shoulder_cm"),
+            "torso_cm": meas.get("precise_torso_cm") or meas.get("torso_cm"),
+            "summary": meas.get("size_description") or "Recommendation generated from captured measurements.",
+            "generated_at": time.time(),
+        }
+        _fitengine_session["step"] = "complete"
+        _fitengine_session["updated_at"] = time.time()
+        return True, dict(_fitengine_session), None
+
+
 # ─────────────────────────────────────────────────────────────────
 # Flask app
 # ─────────────────────────────────────────────────────────────────
@@ -305,7 +446,9 @@ def _make_flask_app():
     @app.route("/api/state")
     def api_state():
         with _state_lock:
-            return jsonify(dict(_state))
+            current_state = dict(_state)
+        current_state["fit_engine"] = _build_fitengine_view(current_state)
+        return jsonify(current_state)
 
     # ── Params ────────────────────────────────────────────────────
     @app.route("/api/params", methods=["GET"])
@@ -378,7 +521,56 @@ def _make_flask_app():
         with _params_lock:
             params = dict(_params)
         b64 = base64.b64encode(frame).decode() if frame else ""
+        state["fit_engine"] = _build_fitengine_view(state)
         return jsonify({"frame_jpeg_b64": b64, "state": state, "params": params})
+
+    @app.route("/api/fitengine/session/status", methods=["GET"])
+    def fitengine_status():
+        with _state_lock:
+            current_state = dict(_state)
+        return jsonify(_build_fitengine_view(current_state))
+
+    @app.route("/api/fitengine/session/start", methods=["POST"])
+    def fitengine_start():
+        data = request.get_json(force=True, silent=True) or {}
+        height_cm = data.get("height_cm", 170)
+        try:
+            height_cm = float(height_cm)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "height_cm must be numeric"}), 400
+        if height_cm < 130 or height_cm > 240:
+            return jsonify({"ok": False, "error": "height_cm out of range"}), 400
+        session = _start_fitengine_session(height_cm)
+        return jsonify({"ok": True, "session": session})
+
+    @app.route("/api/fitengine/session/capture-front", methods=["POST"])
+    def fitengine_capture_front():
+        with _state_lock:
+            current_state = dict(_state)
+        ok, session, err = _capture_fitengine_step("front", current_state)
+        code = 200 if ok else 400
+        return jsonify({"ok": ok, "session": session, "error": err}), code
+
+    @app.route("/api/fitengine/session/capture-side", methods=["POST"])
+    def fitengine_capture_side():
+        with _state_lock:
+            current_state = dict(_state)
+        ok, session, err = _capture_fitengine_step("side", current_state)
+        code = 200 if ok else 400
+        return jsonify({"ok": ok, "session": session, "error": err}), code
+
+    @app.route("/api/fitengine/session/finalize", methods=["POST"])
+    def fitengine_finalize():
+        with _state_lock:
+            current_state = dict(_state)
+        ok, session, err = _finalize_fitengine_session(current_state)
+        code = 200 if ok else 400
+        return jsonify({"ok": ok, "session": session, "error": err}), code
+
+    @app.route("/api/fitengine/session/reset", methods=["POST"])
+    def fitengine_reset():
+        session = _reset_fitengine_session()
+        return jsonify({"ok": True, "session": session})
 
     return app
 

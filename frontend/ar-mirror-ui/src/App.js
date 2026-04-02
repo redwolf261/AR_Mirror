@@ -3,6 +3,7 @@ import './App.css';
 import VideoFeed from './components/VideoFeed';
 import MeasurementsPanel from './components/MeasurementsPanel';
 import Header from './components/Header';
+import FitEngineMode from './components/FitEngineMode';
 import config from './config';
 
 /**
@@ -33,6 +34,7 @@ function App() {
   // UI Controls
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [showMeasurements, setShowMeasurements] = useState(true);
+  const [inFitEngineMode, setInFitEngineMode] = useState(false);
 
   /**
    * Fetch system state from backend
@@ -129,30 +131,43 @@ function App() {
       <Header
         connected={systemState.connected}
         fps={systemState.fps}
+        fitEngineEnabled={config.FITENGINE_MODE_ENABLED}
+        inFitEngineMode={inFitEngineMode}
+        onToggleFitEngine={() => setInFitEngineMode(prev => !prev)}
       />
 
-      <div className="main-container">
-        {/* Main Video Section - Centered Focus */}
-        <VideoFeed
+      {config.FITENGINE_MODE_ENABLED && inFitEngineMode ? (
+        <FitEngineMode
           apiBase={API_BASE}
-          showSkeleton={showSkeleton}
-          showMeasurements={showMeasurements}
+          state={systemState}
+          onExit={() => setInFitEngineMode(false)}
         />
+      ) : (
+        <div className="main-container">
+          {/* Main Video Section - Centered Focus */}
+          <VideoFeed
+            apiBase={API_BASE}
+            showSkeleton={showSkeleton}
+            showMeasurements={showMeasurements}
+          />
 
-        {/* Measurements Panel - Clean Side Panel */}
-        <MeasurementsPanel
-          measurements={systemState.measurements}
-          fps={systemState.fps}
-          garment={systemState.garment}
-          garments={garments}
-          selectedGarment={selectedGarment}
-          onGarmentChange={handleGarmentChange}
-          showSkeleton={showSkeleton}
-          setShowSkeleton={setShowSkeleton}
-          showMeasurements={showMeasurements}
-          setShowMeasurements={setShowMeasurements}
-        />
-      </div>
+          {/* Measurements Panel - Clean Side Panel */}
+          <MeasurementsPanel
+            measurements={systemState.measurements}
+            fps={systemState.fps}
+            garment={systemState.garment}
+            garments={garments}
+            selectedGarment={selectedGarment}
+            onGarmentChange={handleGarmentChange}
+            showSkeleton={showSkeleton}
+            setShowSkeleton={setShowSkeleton}
+            showMeasurements={showMeasurements}
+            setShowMeasurements={setShowMeasurements}
+            fitEngineEnabled={config.FITENGINE_MODE_ENABLED}
+            onStartFitEngine={() => setInFitEngineMode(true)}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -200,13 +200,13 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
 
             # Start Web UI server
             if WEB_SERVER_AVAILABLE:
-                self._web_server = _WebServer(port=5050)
+                self._web_server = _WebServer(port=5051)
                 self._web_server.register_garment_list(
                     lambda: [g.get("file", g.get("name", "")) for g in self.garments]
                 )
                 self._web_server.register_garment_callback(self._on_web_garment_select)
                 self._web_server.start()
-                print("     [OK] Web UI available at http://localhost:5050")
+                print("     [OK] Web UI available at http://localhost:5051")
                 print("          Open the React UI at http://localhost:3001")
 
             print("[4/4] Opening webcam...")

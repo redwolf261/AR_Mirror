@@ -19,6 +19,8 @@ const MeasurementsPanel = ({
   setShowSkeleton,
   showMeasurements,
   setShowMeasurements,
+  fitEngineEnabled,
+  onStartFitEngine,
 }) => {
   return (
     <div className="measurements-panel">
@@ -226,6 +228,31 @@ const MeasurementsPanel = ({
           setShowMeasurements={setShowMeasurements}
         />
       </div>
+
+      {fitEngineEnabled && (
+        <div className="panel-section">
+          <h3 className="panel-title">Guided Sizing</h3>
+          <button
+            type="button"
+            onClick={onStartFitEngine}
+            style={{
+              width: '100%',
+              border: 0,
+              borderRadius: 10,
+              background: '#0071e3',
+              color: '#fff',
+              padding: '12px 14px',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Start 2-Step FitEngine Flow
+          </button>
+          <div style={{ marginTop: 8, fontSize: 11, color: '#86868b', lineHeight: 1.4 }}>
+            Captures front and side views in sequence, then generates size guidance.
+          </div>
+        </div>
+      )}
     </div>
   );
 };
