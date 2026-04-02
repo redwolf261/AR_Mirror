@@ -87,6 +87,10 @@
   align-items: center;
 }
 
+.fitengine-panel-capture {
+  align-items: stretch;
+}
+
 .fitengine-panel h4,
 .fitengine-panel h5 {
   margin: 0;
@@ -100,8 +104,10 @@
 }
 
 .fitengine-frame {
-  width: 280px;
-  height: 480px;
+  width: 100%;
+  max-width: 250px;
+  aspect-ratio: 5 / 8;
+  height: auto;
   object-fit: cover;
   border-radius: 6px;
   border: 1px solid #2c3440;
@@ -131,6 +137,26 @@
   margin-top: 8px;
   font-size: 11px;
   color: #c5cbd4;
+}
+
+.fitengine-check-note-inline {
+  width: 100%;
+  text-align: center;
+  padding: 7px 10px;
+  border-radius: 6px;
+  margin-top: 10px;
+}
+
+.fitengine-check-inline-ok {
+  background: rgba(62, 208, 110, 0.12);
+  border: 1px solid rgba(62, 208, 110, 0.35);
+  color: #b8f4ca;
+}
+
+.fitengine-check-inline-warn {
+  background: rgba(240, 216, 74, 0.12);
+  border: 1px solid rgba(240, 216, 74, 0.35);
+  color: #f7eaa4;
 }
 
 .fitengine-warning-strip,
@@ -188,10 +214,13 @@
   border-radius: 8px;
   padding: 12px;
   min-height: 150px;
+  display: flex;
+  justify-content: flex-start;
 }
 
 .fitengine-result-card {
-  width: 220px;
+  width: 320px;
+  max-width: 100%;
   background: #1a2432;
   border: 1px solid #2d4362;
   border-radius: 8px;
@@ -227,6 +256,11 @@
   .fitengine-grid-main,
   .fitengine-grid-check {
     grid-template-columns: 1fr;
+  }
+
+  .fitengine-frame {
+    max-width: 100%;
+    aspect-ratio: 4 / 5;
   }
 
   .fitengine-actions {

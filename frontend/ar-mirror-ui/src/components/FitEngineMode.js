@@ -70,6 +70,9 @@ const FitEngineMode = ({ apiBase, state, onExit }) => {
   }, [session.active, session.step]);
 
   const streamUrl = `${apiBase}/stream?t=${Date.now()}`;
+  const result = session?.result || {};
+  const formatCm = (value) => (typeof value === 'number' ? `${value.toFixed(1)} cm` : '--');
+  const formatInches = (value) => (typeof value === 'number' ? `${value}"` : '--');
 
   return (
     <div className="fitengine-shell">
@@ -95,32 +98,20 @@ const FitEngineMode = ({ apiBase, state, onExit }) => {
       </div>
 
       <div className="fitengine-grid fitengine-grid-main">
-        <section className="fitengine-panel">
+        <section className="fitengine-panel fitengine-panel-capture">
           <h4>Step 1 - Front View</h4>
           <p>Stand straight, arms slightly away from body.</p>
           <img src={streamUrl} alt="Front view stream" className="fitengine-frame" />
-        </section>
-
-        <section className="fitengine-panel">
-          <h4>Step 2 - Side View (right side)</h4>
-          <p>Turn 90° to your right and keep full upper body visible.</p>
-          <img src={streamUrl} alt="Side view stream" className="fitengine-frame" />
-        </section>
-      </div>
-
-      <div className="fitengine-grid fitengine-grid-check">
-        <section className="fitengine-panel fitengine-check fitengine-check-warn">
-          <h5>Alignment Check - Front</h5>
-          <img src={streamUrl} alt="Front alignment" className="fitengine-frame fitengine-frame-small" />
-          <div className="fitengine-check-note">
+          <div className={`fitengine-check-note fitengine-check-note-inline ${readiness.can_capture_front ? 'fitengine-check-inline-ok' : 'fitengine-check-inline-warn'}`}>
             {readiness.can_capture_front ? 'Front photo looks good' : 'Adjust posture and hold steady'}
           </div>
         </section>
 
-        <section className="fitengine-panel fitengine-check fitengine-check-ok">
-          <h5>Alignment Check - Side</h5>
-          <img src={streamUrl} alt="Side alignment" className="fitengine-frame fitengine-frame-small" />
-          <div className="fitengine-check-note">
+        <section className="fitengine-panel fitengine-panel-capture">
+          <h4>Step 2 - Side View (right side)</h4>
+          <p>Turn 90° to your right and keep full upper body visible.</p>
+          <img src={streamUrl} alt="Side view stream" className="fitengine-frame" />
+          <div className={`fitengine-check-note fitengine-check-note-inline ${readiness.can_capture_side ? 'fitengine-check-inline-ok' : 'fitengine-check-inline-warn'}`}>
             {readiness.can_capture_side ? 'Side photo looks good' : 'Turn fully to side and hold still'}
           </div>
         </section>
@@ -147,10 +138,14 @@ const FitEngineMode = ({ apiBase, state, onExit }) => {
       <div className="fitengine-result-wrap">
         <div className="fitengine-result-card">
           <h4>Your Size Recommendation</h4>
-          <div className="fitengine-metric-row"><span>Collar</span><strong>{session?.result?.shoulder_cm ?? '--'} cm</strong></div>
-          <div className="fitengine-metric-row"><span>Jacket</span><strong>Size {session?.result?.recommended_size ?? '--'}</strong></div>
-          <div className="fitengine-metric-row"><span>Trouser Waist</span><strong>{session?.result?.chest_cm ?? '--'} cm</strong></div>
-          <small>Confidence: {session?.result?.confidence ?? '--'}%</small>
+          <div className="fitengine-metric-row"><span>Jacket</span><strong>Size {result.recommended_size ?? '--'}</strong></div>
+          <div className="fitengine-metric-row"><span>Collar</span><strong>{formatInches(result.collar_in)}</strong></div>
+          <div className="fitengine-metric-row"><span>Trouser Waist</span><strong>{formatInches(result.trouser_waist_in)}</strong></div>
+          <div className="fitengine-metric-row"><span>Chest</span><strong>{formatCm(result.chest_cm)}</strong></div>
+          <div className="fitengine-metric-row"><span>Waist</span><strong>{formatCm(result.waist_cm)}</strong></div>
+          <div className="fitengine-metric-row"><span>Shoulder</span><strong>{formatCm(result.shoulder_cm)}</strong></div>
+          <div className="fitengine-metric-row"><span>Torso</span><strong>{formatCm(result.torso_cm)}</strong></div>
+          <small>Confidence: {result.confidence ?? '--'}%</small>
         </div>
       </div>
     </div>

@@ -376,12 +376,43 @@ def _finalize_fitengine_session(state: Dict[str, Any]) -> tuple[bool, Dict[str, 
             return False, dict(_fitengine_session), "Front and side captures are required"
 
         meas = state.get("measurements") or {}
+        chest_cm = meas.get("precise_chest_cm") or meas.get("chest_cm")
+        shoulder_cm = meas.get("precise_shoulder_cm") or meas.get("shoulder_cm")
+        torso_cm = meas.get("precise_torso_cm") or meas.get("torso_cm")
+        waist_cm = meas.get("waist_cm")
+
+        def _as_float(v: Any) -> Optional[float]:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
+        def _clamp(v: Optional[float], lo: float, hi: float) -> Optional[float]:
+            if v is None:
+                return None
+            return max(lo, min(hi, v))
+
+        chest_cm = _clamp(_as_float(chest_cm), 70.0, 145.0)
+        shoulder_cm = _clamp(_as_float(shoulder_cm), 34.0, 66.0)
+        torso_cm = _clamp(_as_float(torso_cm), 50.0, 90.0)
+        waist_cm = _clamp(_as_float(waist_cm), 60.0, 130.0)
+
+        # If neck is unavailable, estimate collar from chest using a conservative ratio.
+        collar_cm = _clamp(_as_float(meas.get("neck_cm")) or (chest_cm * 0.39 if chest_cm else None), 30.0, 50.0)
+
+        collar_in = round((collar_cm / 2.54) * 2) / 2 if collar_cm is not None else None
+        trouser_waist_in = round((waist_cm / 2.54) / 2) * 2 if waist_cm is not None else None
+
         _fitengine_session["result"] = {
             "recommended_size": meas.get("size_recommendation") or "M",
             "confidence": meas.get("size_confidence") or 0,
-            "chest_cm": meas.get("precise_chest_cm") or meas.get("chest_cm"),
-            "shoulder_cm": meas.get("precise_shoulder_cm") or meas.get("shoulder_cm"),
-            "torso_cm": meas.get("precise_torso_cm") or meas.get("torso_cm"),
+            "chest_cm": chest_cm,
+            "shoulder_cm": shoulder_cm,
+            "torso_cm": torso_cm,
+            "waist_cm": waist_cm,
+            "collar_cm": collar_cm,
+            "collar_in": collar_in,
+            "trouser_waist_in": trouser_waist_in,
             "summary": meas.get("size_description") or "Recommendation generated from captured measurements.",
             "generated_at": time.time(),
         }
