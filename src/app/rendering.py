@@ -218,18 +218,110 @@ class GarmentRenderer:
             }
         return mp_dict
 
-    def _load_garment_image(self, garment_filename):
-        """Load VITON garment + mask with caching (avoids per-frame disk I/O)."""
-        if garment_filename in self._garment_cache:
-            return self._garment_cache[garment_filename]
-        
+    def _load_garment_image(self, garment_ref):
+        """Load real garment assets first, then fallback to VITON template cloth."""
+        cache_key = garment_ref.get("sku") if isinstance(garment_ref, dict) else str(garment_ref)
+        if cache_key in self._garment_cache:
+            return self._garment_cache[cache_key]
+
+        def _derive_mask(image_bgr: np.ndarray) -> np.ndarray:
+            if image_bgr.ndim == 3 and image_bgr.shape[2] == 4:
+                alpha = image_bgr[:, :, 3]
+                return (alpha > 10).astype(np.float32)
+            rgb = cv2.cvtColor(image_bgr[:, :, :3], cv2.COLOR_BGR2RGB)
+            luminance = rgb.mean(axis=2)
+            mask = (luminance > 12).astype(np.float32)
+            mask = cv2.medianBlur((mask * 255).astype(np.uint8), 5).astype(np.float32) / 255.0
+            return mask
+
+        def _pick_real_asset_path(ref: dict) -> Optional[Path]:
+            image_root = ref.get("image_path")
+            if not image_root:
+                return None
+            root = Path(image_root)
+            if not root.is_absolute():
+                root = Path(image_root)
+            if root.is_file():
+                return root
+            if root.is_dir():
+                for candidate in [
+                    root / "image.png",
+                    root / "image.jpg",
+                    root / "image.jpeg",
+                    root / "14274_00.jpg",
+                    root / "front_medium.png",
+                    root / "front_large.png",
+                    root / "front_small.png",
+                    root / "front_xlarge.png",
+                ]:
+                    if candidate.exists():
+                        return candidate
+                pngs = sorted(root.glob("*.png"))
+                jpegs = sorted(root.glob("*.jpg"))
+                if pngs:
+                    return pngs[0]
+                if jpegs:
+                    return jpegs[0]
+            return None
+
+        def _load_real_asset(path: Path):
+            img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+            if img is None:
+                return None, None
+            if img.ndim == 2:
+                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGRA)
+            if img.ndim == 3 and img.shape[2] == 4:
+                alpha = img[:, :, 3]
+                bgr = img[:, :, :3]
+                mask = (alpha > 10).astype(np.float32)
+            else:
+                bgr = img[:, :, :3]
+                # Estimate matte by removing the border/background color.
+                # This works better for product shots on white/black studio backdrops.
+                h, w = bgr.shape[:2]
+                border = np.concatenate([
+                    bgr[: max(1, h // 20), :, :].reshape(-1, 3),
+                    bgr[-max(1, h // 20):, :, :].reshape(-1, 3),
+                    bgr[:, : max(1, w // 20), :].reshape(-1, 3),
+                    bgr[:, -max(1, w // 20):, :].reshape(-1, 3),
+                ], axis=0).astype(np.float32)
+                bg_color = np.median(border, axis=0)
+                dist = np.linalg.norm(bgr.astype(np.float32) - bg_color[None, None, :], axis=2)
+                # Adaptive threshold: keep pixels that differ meaningfully from the border.
+                thr = max(18.0, float(np.percentile(dist, 70) * 0.45))
+                mask = (dist > thr).astype(np.float32)
+                mask = cv2.morphologyEx((mask * 255).astype(np.uint8), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)).astype(np.float32) / 255.0
+                mask = cv2.GaussianBlur(mask, (7, 7), 0)
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+            mask = np.expand_dims(mask.astype(np.float32), axis=-1)
+            target_size = (512, 384)
+            rgb = cv2.resize(rgb, target_size, interpolation=cv2.INTER_LINEAR)
+            mask = cv2.resize(mask, target_size, interpolation=cv2.INTER_NEAREST)
+            if mask.ndim == 2:
+                mask = np.expand_dims(mask, axis=-1)
+            return rgb, mask
+
+        garment_dict = garment_ref if isinstance(garment_ref, dict) else None
+        real_asset_path = _pick_real_asset_path(garment_dict) if garment_dict else None
+        if real_asset_path is not None:
+            cloth_rgb, cloth_mask = _load_real_asset(real_asset_path)
+            if cloth_rgb is not None and cloth_mask is not None:
+                self._garment_cache[cache_key] = (cloth_rgb, cloth_mask)
+                return cloth_rgb, cloth_mask
+
+        garment_filename = None
+        if isinstance(garment_ref, dict):
+            garment_filename = garment_ref.get("file") or garment_ref.get("name") or garment_ref.get("sku")
+        else:
+            garment_filename = str(garment_ref)
+
         cloth_rgb, cloth_mask = load_viton_cloth(
-            "dataset/train",  
-            garment_filename, 
+            "dataset/train",
+            garment_filename,
             target_size=(512, 384)
         )
-        
-        self._garment_cache[garment_filename] = (cloth_rgb, cloth_mask)
+
+        self._garment_cache[cache_key] = (cloth_rgb, cloth_mask)
         return cloth_rgb, cloth_mask
 
     def _render_garment_neural(self, frame, cloth_rgb, cloth_mask, body_measurements):
@@ -595,89 +687,111 @@ class GarmentRenderer:
         if _ht is not None:
             _ht.enqueue(frame)
 
-        if self.dataset_pairs:
+        garment_filename = None
+        # Always prefer the actively selected garment from the runtime garment list.
+        # dataset_pairs may contain entries that are not present in local sparse datasets.
+        if self.garments:
+            idx = self.current_garment_idx % len(self.garments)
+            g = self.garments[idx]
+            if isinstance(g, dict):
+                garment_filename = g.get('file') or g.get('name')
+            elif isinstance(g, str):
+                garment_filename = g
+        elif self.dataset_pairs:
             idx = self.current_garment_idx % len(self.dataset_pairs)
             pair = self.dataset_pairs[idx]
-            cloth_rgb, cloth_mask = self._load_garment_image(pair['garment'])
-            
-            if cloth_rgb is not None and cloth_mask is not None:
-                # Body-aware fitting (all phases use body detection)
-                if self.body_fitter:
-                    try:
-                        self._pose_frame_counter += 1
-                        t_pose = time.perf_counter()
-                        if (self._cached_body_measurements is None or 
-                            self._pose_frame_counter >= self._pose_skip_interval):
-                            body_measurements = self.body_fitter.extract_body_measurements(frame)
-                            self._cached_body_measurements = body_measurements
-                            self._pose_frame_counter = 0
-                        else:
-                            body_measurements = self._cached_body_measurements
+            garment_filename = pair.get('garment')
 
-                        # Inject holistic hand landmarks into body_measurements
-                        # so _render_garment_neural can pass them to TPSPipeline.
-                        if body_measurements is not None and _ht is not None:
-                            _hr = _ht.get_latest()
-                            if _hr is not None:
-                                body_measurements = dict(body_measurements)  # shallow copy
-                                body_measurements['hand_lm_left']  = _hr.left_hand_landmarks
-                                body_measurements['hand_lm_right'] = _hr.right_hand_landmarks
-                        self._stage_times['pose_detect'].append(time.perf_counter() - t_pose)
-                        self._last_body_measurements = body_measurements
-                        
-                        if body_measurements:
-                            # CatVTON path (best quality, runs offline in background)
-                            # Uses cached result when available; triggers rewarp thread otherwise.
-                            _cloth_bgr = (
-                                cv2.cvtColor((cloth_rgb * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
-                                if cloth_rgb is not None
-                                else np.zeros((10, 10, 3), dtype=np.uint8)
-                            )
-                            catvton_result = self._render_garment_catvton(
-                                frame, _cloth_bgr, body_measurements,
-                            )
-                            if catvton_result is not None:
-                                self._stage_times['total_render'].append(
-                                    time.perf_counter() - t_render_start)
-                                return catvton_result
+        cloth_rgb, cloth_mask = (None, None)
+        if garment_filename:
+            cloth_rgb, cloth_mask = self._load_garment_image(garment_filename)
 
-                            # Phase 2: Neural warping with GMM + TOM
-                            if self.phase == 2 and self.phase2_pipeline:
-                                t_neural = time.perf_counter()
-                                result = self._render_garment_neural(
-                                    frame, cloth_rgb, cloth_mask, body_measurements
-                                )
-                                self._stage_times['neural_warp'].append(time.perf_counter() - t_neural)
-                                if result is not None:
-                                    self._stage_times['total_render'].append(time.perf_counter() - t_render_start)
-                                    if self.show_debug:
-                                        result = self.body_fitter.draw_debug_overlay(
-                                            result, body_measurements,
-                                            show_box=True, show_measurements=True, show_skeleton=True
-                                        )
-                                    return result
-                            
-                            # Geometric fitting (Phase 0 or Phase 2 fallback)
-                            result = self.body_fitter.fit_garment_to_body(
+        # Fallback: if chosen garment file is unavailable, try dataset pair entry.
+        if cloth_rgb is None and cloth_mask is None and self.dataset_pairs:
+            idx = self.current_garment_idx % len(self.dataset_pairs)
+            pair = self.dataset_pairs[idx]
+            pair_filename = pair.get('garment')
+            if pair_filename:
+                cloth_rgb, cloth_mask = self._load_garment_image(pair_filename)
+
+        if cloth_rgb is not None and cloth_mask is not None:
+            # Body-aware fitting (all phases use body detection)
+            if self.body_fitter:
+                try:
+                    self._pose_frame_counter += 1
+                    t_pose = time.perf_counter()
+                    if (self._cached_body_measurements is None or 
+                        self._pose_frame_counter >= self._pose_skip_interval):
+                        body_measurements = self.body_fitter.extract_body_measurements(frame)
+                        self._cached_body_measurements = body_measurements
+                        self._pose_frame_counter = 0
+                    else:
+                        body_measurements = self._cached_body_measurements
+
+                    # Inject holistic hand landmarks into body_measurements
+                    # so _render_garment_neural can pass them to TPSPipeline.
+                    if body_measurements is not None and _ht is not None:
+                        _hr = _ht.get_latest()
+                        if _hr is not None:
+                            body_measurements = dict(body_measurements)  # shallow copy
+                            body_measurements['hand_lm_left']  = _hr.left_hand_landmarks
+                            body_measurements['hand_lm_right'] = _hr.right_hand_landmarks
+                    self._stage_times['pose_detect'].append(time.perf_counter() - t_pose)
+                    self._last_body_measurements = body_measurements
+                    
+                    if body_measurements:
+                        # CatVTON path (best quality, runs offline in background)
+                        # Uses cached result when available; triggers rewarp thread otherwise.
+                        _cloth_bgr = (
+                            cv2.cvtColor((cloth_rgb * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+                            if cloth_rgb is not None
+                            else np.zeros((10, 10, 3), dtype=np.uint8)
+                        )
+                        catvton_result = self._render_garment_catvton(
+                            frame, _cloth_bgr, body_measurements,
+                        )
+                        if catvton_result is not None:
+                            self._stage_times['total_render'].append(
+                                time.perf_counter() - t_render_start)
+                            return catvton_result
+
+                        # Phase 2: Neural warping with GMM + TOM
+                        if self.phase == 2 and self.phase2_pipeline:
+                            t_neural = time.perf_counter()
+                            result = self._render_garment_neural(
                                 frame, cloth_rgb, cloth_mask, body_measurements
                             )
-                            if self.show_debug:
-                                result = self.body_fitter.draw_debug_overlay(
-                                    result, body_measurements,
-                                    show_box=True, show_measurements=True, show_skeleton=True
-                                )
-                            return result
-                        else:
-                            result = self._blend_garment_image(frame, cloth_rgb, cloth_mask)
-                            if self.show_debug:
-                                result = self.body_fitter.draw_debug_overlay(result)
-                            return result
-                    except Exception as e:
-                        logger.error(f"Body-aware fitting failed: {e}")
-                        return self._blend_garment_image(frame, cloth_rgb, cloth_mask)
-                
-                # No body fitter: simple blending
-                return self._blend_garment_image(frame, cloth_rgb, cloth_mask)
+                            self._stage_times['neural_warp'].append(time.perf_counter() - t_neural)
+                            if result is not None:
+                                self._stage_times['total_render'].append(time.perf_counter() - t_render_start)
+                                if self.show_debug:
+                                    result = self.body_fitter.draw_debug_overlay(
+                                        result, body_measurements,
+                                        show_box=True, show_measurements=True, show_skeleton=True
+                                    )
+                                return result
+                        
+                        # Geometric fitting (Phase 0 or Phase 2 fallback)
+                        result = self.body_fitter.fit_garment_to_body(
+                            frame, cloth_rgb, cloth_mask, body_measurements
+                        )
+                        if self.show_debug:
+                            result = self.body_fitter.draw_debug_overlay(
+                                result, body_measurements,
+                                show_box=True, show_measurements=True, show_skeleton=True
+                            )
+                        return result
+                    else:
+                        result = self._blend_garment_image(frame, cloth_rgb, cloth_mask)
+                        if self.show_debug:
+                            result = self.body_fitter.draw_debug_overlay(result)
+                        return result
+                except Exception as e:
+                    logger.error(f"Body-aware fitting failed: {e}")
+                    return self._blend_garment_image(frame, cloth_rgb, cloth_mask)
+            
+            # No body fitter: simple blending
+            return self._blend_garment_image(frame, cloth_rgb, cloth_mask)
         
         # Fallback to colored shirt if dataset image not available
         return self._render_colored_shirt(frame, garment)

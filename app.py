@@ -268,7 +268,47 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
             return False
     
     def _get_available_garments(self):
-        """Get list of available garments from dataset/train/cloth"""
+        """Get list of available garments from the real catalog first, then fallback assets."""
+        def _has_real_photo_asset(image_path: str) -> bool:
+            root = Path(image_path)
+            if not root.is_absolute():
+                root = Path(image_path)
+            if not root.exists() or not root.is_dir():
+                return False
+            for candidate in ["image.png", "image.jpg", "image.jpeg", "14274_00.jpg"]:
+                if (root / candidate).exists():
+                    return True
+            return False
+
+        inventory_files = [
+            Path("assets/garments/garment_inventory.json"),
+            Path("config/garment_inventory.json"),
+        ]
+        for inventory_file in inventory_files:
+            if inventory_file.exists():
+                try:
+                    import json
+                    with open(inventory_file, 'r', encoding='utf-8') as handle:
+                        inventory = json.load(handle)
+                    garments = []
+                    for item in inventory:
+                        if not isinstance(item, dict):
+                            continue
+                        sku = item.get("sku")
+                        image_path = item.get("image_path")
+                        if sku and image_path and _has_real_photo_asset(image_path):
+                            garments.append({
+                                **item,
+                                "name": item.get("name") or sku,
+                                "sku": sku,
+                                "image_path": image_path,
+                            })
+                    if garments:
+                        print(f"     [OK] Loaded {len(garments)} real garments from {inventory_file}")
+                        return garments
+                except Exception as e:
+                    print(f"     [WARN] Could not load garment inventory {inventory_file}: {e}")
+
         cloth_dir = Path("dataset/train/cloth")
         if cloth_dir.exists():
             files = sorted(cloth_dir.glob("*.jpg"))[:200]  # cap at 200 for fast start
@@ -455,7 +495,14 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
 
                         # Draw skeleton overlay on web stream frame
                         web_frame = output_frame.copy()
-                        if SKELETON_DRAW_AVAILABLE and _ws_meas:
+                        show_skeleton_overlay = True
+                        if self._web_server:
+                            try:
+                                show_skeleton_overlay = bool(self._web_server.get_param("show_skeleton"))
+                            except Exception:
+                                show_skeleton_overlay = True
+
+                        if SKELETON_DRAW_AVAILABLE and _ws_meas and show_skeleton_overlay:
                             try:
                                 draw_skeleton_overlay(web_frame, _ws_meas)
                             except Exception:
@@ -530,7 +577,7 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
     def _on_web_garment_select(self, name: str):
         """Called from the WebServer thread when user selects a garment in the browser UI."""
         for i, g in enumerate(self.garments):
-            if g.get("file") == name or g.get("name") == name or g.get("sku") == name:
+            if g.get("sku") == name or g.get("file") == name or g.get("name") == name or g.get("image_path") == name:
                 self.current_garment_idx = i
                 self._on_garment_change()
                 logger.info(f"[Web] Garment switched → {name} (idx={i})")

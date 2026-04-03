@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import './App.css';
 import Header from './components/Header';
 import FitEngineMode from './components/FitEngineMode';
+import GarmentOverlayMode from './components/GarmentOverlayMode';
 import config from './config';
 
 /**
@@ -25,6 +26,10 @@ function App() {
     measurements: null,
     connected: false,
   });
+
+  const [viewMode, setViewMode] = useState('fitengine');
+  const [garments, setGarments] = useState([]);
+  const [selectedGarment, setSelectedGarment] = useState('');
 
   /**
    * Fetch system state from backend
@@ -55,21 +60,91 @@ function App() {
     return () => clearInterval(interval);
   }, [API_BASE]);
 
+  useEffect(() => {
+    const fetchGarments = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/garments`);
+        if (!response.ok) {
+          return;
+        }
+        const data = await response.json();
+        const items = data.garments || [];
+        setGarments(items);
+        if (!selectedGarment && items.length > 0) {
+          setSelectedGarment(typeof items[0] === 'string' ? items[0] : (items[0].sku || items[0].name || items[0].file || ''));
+        }
+      } catch (_err) {
+        // Non-blocking.
+      }
+    };
+
+    fetchGarments();
+  }, [API_BASE, selectedGarment]);
+
+  const handleGarmentChange = useCallback(async (garmentId) => {
+    if (!garmentId) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/garment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: garmentId }),
+      });
+      if (response.ok) {
+        setSelectedGarment(garmentId);
+      }
+    } catch (_err) {
+      // Non-blocking.
+    }
+  }, [API_BASE]);
+
+  useEffect(() => {
+    const updateRenderMode = async () => {
+      try {
+        const overlayEnabled = viewMode === 'overlay';
+        await fetch(`${API_BASE}/api/params`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            render_tryon_overlay: overlayEnabled,
+            show_garment_box: false,
+            show_skeleton: false,
+          }),
+        });
+      } catch (_err) {
+        // Non-blocking visual preference update.
+      }
+    };
+
+    updateRenderMode();
+  }, [API_BASE, viewMode]);
+
   return (
     <div className="app">
       <Header
         connected={systemState.connected}
         fps={systemState.fps}
         fitEngineEnabled={false}
-        inFitEngineMode
+        inFitEngineMode={viewMode === 'fitengine'}
         onToggleFitEngine={null}
       />
 
-      <FitEngineMode
-        apiBase={API_BASE}
-        state={systemState}
-        showExit={false}
-      />
+      {viewMode === 'fitengine' ? (
+        <FitEngineMode
+          apiBase={API_BASE}
+          state={systemState}
+          showExit={false}
+          onProceedToOverlay={() => setViewMode('overlay')}
+        />
+      ) : (
+        <GarmentOverlayMode
+          apiBase={API_BASE}
+          fps={systemState.fps}
+          garments={garments}
+          selectedGarment={selectedGarment}
+          onGarmentChange={handleGarmentChange}
+          onBack={() => setViewMode('fitengine')}
+        />
+      )}
     </div>
   );
 }

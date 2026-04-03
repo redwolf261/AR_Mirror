@@ -168,37 +168,37 @@ const MeasurementsPanel = ({
             {garments.slice(0, 6).map((garment, index) => (
               <button
                 key={`garment-${index}`}
-                onClick={() => onGarmentChange && onGarmentChange(index)}
+                onClick={() => onGarmentChange && onGarmentChange(typeof garment === 'string' ? garment : (garment.name || garment.file || ''))}
                 style={{
                   padding: '12px',
-                  border: selectedGarment === index
+                  border: selectedGarment === (typeof garment === 'string' ? garment : (garment.name || garment.file || ''))
                     ? '2px solid #0071e3'
                     : '1px solid rgba(134, 134, 139, 0.3)',
                   borderRadius: '8px',
-                  background: selectedGarment === index
+                  background: selectedGarment === (typeof garment === 'string' ? garment : (garment.name || garment.file || ''))
                     ? 'rgba(0, 113, 227, 0.08)'
                     : '#f5f5f7',
                   cursor: 'pointer',
                   fontSize: '12px',
-                  fontWeight: selectedGarment === index ? 600 : 400,
-                  color: selectedGarment === index ? '#0071e3' : '#1d1d1f',
+                  fontWeight: selectedGarment === (typeof garment === 'string' ? garment : (garment.name || garment.file || '')) ? 600 : 400,
+                  color: selectedGarment === (typeof garment === 'string' ? garment : (garment.name || garment.file || '')) ? '#0071e3' : '#1d1d1f',
                   transition: 'all 0.2s ease',
                   textAlign: 'center'
                 }}
                 onMouseOver={(e) => {
-                  if (selectedGarment !== index) {
+                  if (selectedGarment !== (typeof garment === 'string' ? garment : (garment.name || garment.file || ''))) {
                     e.target.style.background = '#e8e8ed'
                     e.target.style.borderColor = 'rgba(134, 134, 139, 0.5)'
                   }
                 }}
                 onMouseOut={(e) => {
-                  if (selectedGarment !== index) {
+                  if (selectedGarment !== (typeof garment === 'string' ? garment : (garment.name || garment.file || ''))) {
                     e.target.style.background = '#f5f5f7'
                     e.target.style.borderColor = 'rgba(134, 134, 139, 0.3)'
                   }
                 }}
               >
-                {garment.name || `Garment ${index + 1}`}
+                {typeof garment === 'string' ? garment : (garment.name || garment.file || `Garment ${index + 1}`)}
               </button>
             ))}
           </div>

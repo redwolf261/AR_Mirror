@@ -196,7 +196,7 @@
 
 .fitengine-actions {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -212,12 +212,18 @@
 }
 
 .fitengine-actions button:nth-child(4) {
-  background: #ff6a00;
-  border-color: #ff6a00;
-  color: #fff;
-  font-weight: 600;
+  background: linear-gradient(135deg, #ff7a00 0%, #ff9a00 100%);
+  border: none;
+  color: #11131a;
+  font-weight: 700;
 }
 
+.fitengine-proceed-btn {
+  background: linear-gradient(135deg, #18b26b 0%, #13915a 100%);
+  border: none;
+  color: #eafff5;
+  font-weight: 700;
+}
 .fitengine-actions button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -393,6 +399,29 @@
   color: #dce8f7;
   font-size: 11px;
   line-height: 1.5;
+}
+
+.fitengine-garment-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.fitengine-garment-btn {
+  padding: 10px 8px;
+  border-radius: 8px;
+  border: 1px solid #2f3a4b;
+  background: #171d27;
+  color: #d8e0ea;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.fitengine-garment-btn-active {
+  border-color: #18b26b;
+  background: rgba(24, 178, 107, 0.14);
+  color: #bff5d9;
 }
 
 @media (max-width: 1100px) {

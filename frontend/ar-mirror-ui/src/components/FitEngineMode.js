@@ -7,7 +7,7 @@ import {
   fuseTruth,
 } from '../utils/fitengineTruthMath';
 
-const FitEngineMode = ({ apiBase, state, onExit, showExit = true }) => {
+const FitEngineMode = ({ apiBase, state, onExit, showExit = true, onProceedToOverlay }) => {
   const [heightCm, setHeightCm] = useState('170');
   const [sessionStatus, setSessionStatus] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -414,6 +414,16 @@ const FitEngineMode = ({ apiBase, state, onExit, showExit = true }) => {
             <button type="button" disabled={busy || !readiness.can_capture_side} onClick={handleCaptureSide}>Capture Side</button>
             <button type="button" disabled={busy || !readiness.can_finalize} onClick={() => postAction('/api/fitengine/session/finalize')}>Get My Size</button>
             <button type="button" disabled={busy} onClick={handleReset}>Reset</button>
+            {onProceedToOverlay && (
+              <button
+                type="button"
+                className="fitengine-proceed-btn"
+                disabled={busy || !displayedResult.recommended_size}
+                onClick={() => onProceedToOverlay(displayedResult)}
+              >
+                Continue to Garment Overlay
+              </button>
+            )}
           </div>
         </div>
 
