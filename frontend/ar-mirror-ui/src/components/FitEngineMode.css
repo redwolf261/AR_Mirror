@@ -280,6 +280,12 @@
   margin: 0 0 12px;
 }
 
+.fitengine-confidence-line {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #c8d8ec;
+}
+
 .fitengine-mini-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -318,6 +324,77 @@
   line-height: 1.45;
 }
 
+.fitengine-gate-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.fitengine-gate-badge {
+  font-size: 10px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+  font-weight: 600;
+}
+
+.fitengine-gate-ok {
+  color: #c6ffd8;
+  border-color: rgba(62, 208, 110, 0.45);
+  background: rgba(62, 208, 110, 0.14);
+}
+
+.fitengine-gate-warn {
+  color: #ffe8a5;
+  border-color: rgba(240, 216, 74, 0.45);
+  background: rgba(240, 216, 74, 0.12);
+}
+
+.fitengine-diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.fitengine-breakdown-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.fitengine-breakdown-item {
+  background: rgba(13, 15, 19, 0.62);
+  border: 1px solid rgba(168, 188, 214, 0.2);
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 11px;
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.fitengine-breakdown-item span {
+  color: #9db0ca;
+}
+
+.fitengine-breakdown-item strong {
+  color: #e8f1ff;
+}
+
+.fitengine-reasons {
+  margin-top: 10px;
+  padding: 10px 11px;
+  border-radius: 6px;
+  background: rgba(13, 15, 19, 0.45);
+  border: 1px solid rgba(168, 188, 214, 0.15);
+  color: #dce8f7;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 @media (max-width: 1100px) {
   .fitengine-height-row {
     grid-template-columns: 1fr;
@@ -347,6 +424,14 @@
   }
 
   .fitengine-mini-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fitengine-breakdown-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fitengine-diagnostics-grid {
     grid-template-columns: 1fr;
   }
 }

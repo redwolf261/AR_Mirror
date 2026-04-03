@@ -90,6 +90,7 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
         self.cap: Optional[cv2.VideoCapture] = None
         self.current_garment_idx = 0
         self.show_overlay = True
+        self.render_tryon_overlay = True
         self.garments = []
         self.garment_images = []
         self.dataset_pairs = []
@@ -205,6 +206,7 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                     lambda: [g.get("file", g.get("name", "")) for g in self.garments]
                 )
                 self._web_server.register_garment_callback(self._on_web_garment_select)
+                self._web_server.register_param_callback(self._on_web_params_update)
                 self._web_server.start()
                 print("     [OK] Web UI available at http://localhost:5051")
                 print("          Open the React UI at http://localhost:3001")
@@ -241,15 +243,15 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                 print("     [ERROR] Cannot open camera with any backend")
                 print("     [TIP] Close other apps using camera (Edge, Teams, Zoom, etc.)")
                 return False
-            
+
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)  # type: ignore
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)  # type: ignore
             self.cap.set(cv2.CAP_PROP_FPS, 30)  # type: ignore
-            
+
             width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))  # type: ignore
             height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))  # type: ignore
             print(f"     [OK] Camera open at {width}x{height}")
-            
+
             print("[5/5] Starting demo...")
             self.start_time = time.time()
             mode_map = {
@@ -258,7 +260,7 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
             }
             mode_str = mode_map.get(self.phase, "UNKNOWN")
             print(f"     [OK] Ready to start [{mode_str}]")
-            
+
             return True
             
         except Exception as e:
@@ -403,7 +405,8 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                         except Exception:
                             pass
 
-                    display_frame = self._render_garment(display_frame, garment)
+                    if self.render_tryon_overlay:
+                        display_frame = self._render_garment(display_frame, garment)
                     output_frame = display_frame.copy()
 
                     # Log measurements to flywheel every 30 frames
@@ -533,6 +536,11 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                 logger.info(f"[Web] Garment switched → {name} (idx={i})")
                 return
         logger.warning(f"[Web] Garment not found: {name}")
+
+    def _on_web_params_update(self, updates: dict):
+        """Apply web-exposed runtime params to rendering controls."""
+        if "render_tryon_overlay" in updates:
+            self.render_tryon_overlay = bool(updates.get("render_tryon_overlay"))
 
     def _on_garment_change(self):
         """Close current flywheel session and open a new one for the new garment."""

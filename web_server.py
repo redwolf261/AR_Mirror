@@ -49,6 +49,7 @@ _params: Dict[str, Any] = {
     # ── Visual overlay ───────────────────────────────────────────
     "show_skeleton":       True,
     "show_garment_box":    True,
+    "render_tryon_overlay": True,
     # ── Garment placement ────────────────────────────────────────
     "torso_x_pad_pct":     0.25,      # extra width each side (fraction)
     "target_w_min_pct":    0.55,      # min garment width as fraction of frame
@@ -67,6 +68,7 @@ _params: Dict[str, Any] = {
 PARAM_META: Dict[str, Dict] = {
     "show_skeleton":         {"type": "bool",  "label": "Show skeleton"},
     "show_garment_box":      {"type": "bool",  "label": "Show garment box"},
+    "render_tryon_overlay":  {"type": "bool",  "label": "Render try-on overlay"},
     "torso_x_pad_pct":       {"type": "float", "min": 0.0, "max": 0.5,  "step": 0.01, "label": "Torso x-pad (%)"},
     "target_w_min_pct":      {"type": "float", "min": 0.2, "max": 0.9,  "step": 0.01, "label": "Garment min width (%)"},
     "target_w_scale":        {"type": "float", "min": 0.8, "max": 2.0,  "step": 0.05, "label": "Width scale"},
@@ -95,6 +97,7 @@ _fitengine_session: Dict[str, Any] = {
     "side_captured": False,
     "front_snapshot": None,
     "side_snapshot": None,
+    "truth_metrics": None,
     "result": None,
     "warnings": [],
     "updated_at": time.time(),
@@ -110,8 +113,25 @@ def _is_measurement_ready(state: Dict[str, Any]) -> bool:
 
 def _measurement_snapshot(state: Dict[str, Any]) -> Dict[str, Any]:
     meas = state.get("measurements") or {}
+    base_conf_raw = meas.get("size_confidence")
+    base_conf: Optional[float]
+    if isinstance(base_conf_raw, (int, float, str)):
+        try:
+            base_conf = float(base_conf_raw)
+        except (TypeError, ValueError):
+            base_conf = None
+    else:
+        base_conf = None
+
+    quality_score = 40.0
+    if state.get("has_landmarks"):
+        quality_score += 20.0
+    if base_conf is not None:
+        quality_score += max(0.0, min(40.0, base_conf * 0.4))
+
     return {
         "ts": time.time(),
+        "quality_score": round(min(100.0, quality_score), 1),
         "measurements": {
             "shoulder_cm": meas.get("precise_shoulder_cm") or meas.get("shoulder_cm"),
             "chest_cm": meas.get("precise_chest_cm") or meas.get("chest_cm"),
@@ -123,21 +143,108 @@ def _measurement_snapshot(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _as_float(v: Any) -> Optional[float]:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _side_pose_ready(state: Dict[str, Any], session: Dict[str, Any]) -> tuple[bool, str]:
+    """Heuristic: side capture should show meaningfully narrower upper-body span than front capture."""
+    front_snapshot = session.get("front_snapshot") or {}
+    front_meas = (front_snapshot.get("measurements") or {})
+    current_meas = state.get("measurements") or {}
+
+    front_shoulder = _as_float(front_meas.get("shoulder_cm"))
+    front_chest = _as_float(front_meas.get("chest_cm"))
+    curr_shoulder = _as_float(current_meas.get("precise_shoulder_cm") or current_meas.get("shoulder_cm"))
+    curr_chest = _as_float(current_meas.get("precise_chest_cm") or current_meas.get("chest_cm"))
+
+    # If we cannot compare, don't hard-block side capture based on this check alone.
+    if front_shoulder is None or curr_shoulder is None:
+        return True, ""
+
+    shoulder_ratio = curr_shoulder / max(front_shoulder, 1e-6)
+    chest_ratio = None
+    if front_chest is not None and curr_chest is not None:
+        chest_ratio = curr_chest / max(front_chest, 1e-6)
+
+    # Require a clearly narrower upper-body projection for a valid side pose.
+    # If chest is present, both checks should pass; otherwise use stricter shoulder-only gate.
+    shoulder_ok = shoulder_ratio <= 0.83
+    if chest_ratio is not None:
+        chest_ok = chest_ratio <= 0.86
+        pose_ok = shoulder_ok and chest_ok
+    else:
+        chest_ok = None
+        pose_ok = shoulder_ok
+
+    if pose_ok:
+        return True, ""
+    ratio_text = f"(shoulder ratio={shoulder_ratio:.2f}"
+    if chest_ok is not None and chest_ratio is not None:
+        ratio_text += f", chest ratio={chest_ratio:.2f}"
+    ratio_text += ")"
+    return False, f"Turn further to your side (about 90 degrees) before capturing side view {ratio_text}."
+
+
+def _side_snapshot_distinct(session: Dict[str, Any]) -> tuple[bool, str, Optional[float]]:
+    """Validate that side snapshot is measurably different from front snapshot."""
+    front_snapshot = session.get("front_snapshot") or {}
+    side_snapshot = session.get("side_snapshot") or {}
+    front_meas = (front_snapshot.get("measurements") or {})
+    side_meas = (side_snapshot.get("measurements") or {})
+
+    front_shoulder = _as_float(front_meas.get("shoulder_cm"))
+    side_shoulder = _as_float(side_meas.get("shoulder_cm"))
+    front_chest = _as_float(front_meas.get("chest_cm"))
+    side_chest = _as_float(side_meas.get("chest_cm"))
+
+    if front_shoulder is None or side_shoulder is None:
+        return True, "", None
+
+    shoulder_ratio = side_shoulder / max(front_shoulder, 1e-6)
+    chest_ratio = None
+    if front_chest is not None and side_chest is not None:
+        chest_ratio = side_chest / max(front_chest, 1e-6)
+
+    # Distinct if side is clearly narrower than front in both dimensions when available.
+    if chest_ratio is not None:
+        distinct = shoulder_ratio <= 0.85 and chest_ratio <= 0.88
+    else:
+        distinct = shoulder_ratio <= 0.82
+
+    if distinct:
+        basis = shoulder_ratio if chest_ratio is None else (shoulder_ratio + chest_ratio) / 2.0
+        score = max(0.0, min(100.0, (1.0 - basis) * 260.0 + 20.0))
+        return True, "", round(score, 1)
+
+    details = f"(shoulder ratio={shoulder_ratio:.2f}"
+    if chest_ratio is not None:
+        details += f", chest ratio={chest_ratio:.2f}"
+    details += ")"
+    return False, f"Side capture looks too similar to front view. Turn 90° and recapture side {details}.", 0.0
+
+
 def _build_fitengine_view(state: Dict[str, Any]) -> Dict[str, Any]:
     with _fitengine_lock:
         session = dict(_fitengine_session)
 
     ready = _is_measurement_ready(state)
+    side_pose_ok, side_pose_hint = _side_pose_ready(state, session)
     warnings = list(session.get("warnings") or [])
     if session.get("active") and not ready:
         warnings.append("Hold a stable full upper-body pose in frame.")
+    if session.get("active") and session.get("step") == "side" and ready and not side_pose_ok:
+        warnings.append(side_pose_hint)
 
     return {
         "session": session,
         "readiness": {
             "measurement_ready": ready,
             "can_capture_front": bool(session.get("active") and session.get("step") == "front" and ready),
-            "can_capture_side": bool(session.get("active") and session.get("step") == "side" and ready),
+            "can_capture_side": bool(session.get("active") and session.get("step") == "side" and ready and side_pose_ok),
             "can_finalize": bool(session.get("active") and session.get("front_captured") and session.get("side_captured")),
         },
         "warnings": warnings,
@@ -319,6 +426,7 @@ def _start_fitengine_session(height_cm: float) -> Dict[str, Any]:
             "side_captured": False,
             "front_snapshot": None,
             "side_snapshot": None,
+            "truth_metrics": None,
             "result": None,
             "warnings": [],
             "updated_at": time.time(),
@@ -337,6 +445,7 @@ def _reset_fitengine_session() -> Dict[str, Any]:
             "side_captured": False,
             "front_snapshot": None,
             "side_snapshot": None,
+            "truth_metrics": None,
             "result": None,
             "warnings": [],
             "updated_at": time.time(),
@@ -354,6 +463,11 @@ def _capture_fitengine_step(step: str, state: Dict[str, Any]) -> tuple[bool, Dic
         if not ready:
             return False, dict(_fitengine_session), "Measurement signal is not stable yet"
 
+        if step == "side":
+            side_ok, side_hint = _side_pose_ready(state, _fitengine_session)
+            if not side_ok:
+                return False, dict(_fitengine_session), side_hint
+
         snap = _measurement_snapshot(state)
         if step == "front":
             _fitengine_session["front_captured"] = True
@@ -368,6 +482,14 @@ def _capture_fitengine_step(step: str, state: Dict[str, Any]) -> tuple[bool, Dic
         return True, dict(_fitengine_session), None
 
 
+def _update_fitengine_truth(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    with _fitengine_lock:
+        if _fitengine_session.get("active"):
+            _fitengine_session["truth_metrics"] = dict(metrics)
+            _fitengine_session["updated_at"] = time.time()
+        return dict(_fitengine_session)
+
+
 def _finalize_fitengine_session(state: Dict[str, Any]) -> tuple[bool, Dict[str, Any], Optional[str]]:
     with _fitengine_lock:
         if not _fitengine_session.get("active"):
@@ -375,27 +497,75 @@ def _finalize_fitengine_session(state: Dict[str, Any]) -> tuple[bool, Dict[str, 
         if not (_fitengine_session.get("front_captured") and _fitengine_session.get("side_captured")):
             return False, dict(_fitengine_session), "Front and side captures are required"
 
-        meas = state.get("measurements") or {}
-        chest_cm = meas.get("precise_chest_cm") or meas.get("chest_cm")
-        shoulder_cm = meas.get("precise_shoulder_cm") or meas.get("shoulder_cm")
-        torso_cm = meas.get("precise_torso_cm") or meas.get("torso_cm")
-        waist_cm = meas.get("waist_cm")
+        side_distinct_ok, side_distinct_msg, side_distinct_score = _side_snapshot_distinct(_fitengine_session)
+        if not side_distinct_ok:
+            return False, dict(_fitengine_session), side_distinct_msg
 
-        def _as_float(v: Any) -> Optional[float]:
-            try:
-                return float(v)
-            except (TypeError, ValueError):
-                return None
+        meas = state.get("measurements") or {}
+        truth = _fitengine_session.get("truth_metrics") or {}
+        front_snapshot = _fitengine_session.get("front_snapshot") or {}
+        side_snapshot = _fitengine_session.get("side_snapshot") or {}
+        front_meas = (front_snapshot.get("measurements") or {})
+        side_meas = (side_snapshot.get("measurements") or {})
+
+        chest_cm = truth.get("chest_circumference_cm") or meas.get("precise_chest_cm") or meas.get("chest_cm")
+        shoulder_cm = truth.get("shoulder_cm") or meas.get("precise_shoulder_cm") or meas.get("shoulder_cm")
+        torso_cm = truth.get("torso_cm") or meas.get("precise_torso_cm") or meas.get("torso_cm")
+        waist_cm = truth.get("waist_circumference_cm") or meas.get("waist_cm")
 
         def _clamp(v: Optional[float], lo: float, hi: float) -> Optional[float]:
             if v is None:
                 return None
             return max(lo, min(hi, v))
 
-        chest_cm = _clamp(_as_float(chest_cm), 70.0, 145.0)
-        shoulder_cm = _clamp(_as_float(shoulder_cm), 34.0, 66.0)
-        torso_cm = _clamp(_as_float(torso_cm), 50.0, 90.0)
-        waist_cm = _clamp(_as_float(waist_cm), 60.0, 130.0)
+        def _fused_metric(metric: str, live_value: Any, lo: float, hi: float) -> tuple[Optional[float], bool]:
+            candidates: list[float] = []
+            weights: list[float] = []
+
+            fv = _as_float(front_meas.get(metric))
+            if fv is not None:
+                candidates.append(fv)
+                weights.append(max(0.4, _as_float(front_snapshot.get("quality_score")) or 60.0))
+
+            sv = _as_float(side_meas.get(metric))
+            if sv is not None:
+                candidates.append(sv)
+                weights.append(max(0.4, _as_float(side_snapshot.get("quality_score")) or 60.0))
+
+            lv = _as_float(live_value)
+            if lv is not None:
+                candidates.append(lv)
+                weights.append(75.0)
+
+            if not candidates:
+                return None, False
+
+            fused = float(np.average(np.array(candidates), weights=np.array(weights)))
+            clamped = fused < lo or fused > hi
+            return _clamp(fused, lo, hi), clamped
+
+        def _metric_stability(front_value: Any, side_value: Any, live_value: Any, final_value: Optional[float]) -> Optional[float]:
+            points = []
+            for source in (front_value, side_value, live_value):
+                v = _as_float(source)
+                if v is not None:
+                    points.append(v)
+            if final_value is not None:
+                points.append(final_value)
+
+            if len(points) < 2:
+                return None
+
+            pmax, pmin = max(points), min(points)
+            base = max(1.0, abs(final_value) if final_value is not None else abs(sum(points) / len(points)))
+            rel_spread = (pmax - pmin) / base
+            # Softer penalty than before; avoid collapsing to zero for moderate pose variance.
+            return max(10.0, min(100.0, 100.0 - rel_spread * 120.0))
+
+        chest_cm, chest_clamped = _fused_metric("chest_cm", chest_cm, 70.0, 145.0)
+        shoulder_cm, shoulder_clamped = _fused_metric("shoulder_cm", shoulder_cm, 34.0, 66.0)
+        torso_cm, torso_clamped = _fused_metric("torso_cm", torso_cm, 50.0, 90.0)
+        waist_cm, waist_clamped = _fused_metric("waist_cm", waist_cm, 60.0, 130.0)
 
         # If neck is unavailable, estimate collar from chest using a conservative ratio.
         collar_cm = _clamp(_as_float(meas.get("neck_cm")) or (chest_cm * 0.39 if chest_cm else None), 30.0, 50.0)
@@ -403,9 +573,64 @@ def _finalize_fitengine_session(state: Dict[str, Any]) -> tuple[bool, Dict[str, 
         collar_in = round((collar_cm / 2.54) * 2) / 2 if collar_cm is not None else None
         trouser_waist_in = round((waist_cm / 2.54) / 2) * 2 if waist_cm is not None else None
 
+        base_conf = _as_float(truth.get("truth_confidence")) or _as_float(meas.get("size_confidence"))
+        if base_conf is None or base_conf <= 0:
+            front_q = _as_float(front_snapshot.get("quality_score")) or 60.0
+            side_q = _as_float(side_snapshot.get("quality_score")) or 60.0
+            # Conservative fallback when model confidence is unavailable.
+            base_conf = ((front_q + side_q) / 2.0) * 0.75
+        # Support both 0..1 and 0..100 representations.
+        if base_conf <= 1.0:
+            base_conf *= 100.0
+
+        stability_components = [
+            _metric_stability(front_meas.get("shoulder_cm"), side_meas.get("shoulder_cm"), meas.get("precise_shoulder_cm") or meas.get("shoulder_cm"), shoulder_cm),
+            _metric_stability(front_meas.get("chest_cm"), side_meas.get("chest_cm"), meas.get("precise_chest_cm") or meas.get("chest_cm"), chest_cm),
+            _metric_stability(front_meas.get("waist_cm"), side_meas.get("waist_cm"), meas.get("waist_cm"), waist_cm),
+            _metric_stability(front_meas.get("torso_cm"), side_meas.get("torso_cm"), meas.get("precise_torso_cm") or meas.get("torso_cm"), torso_cm),
+        ]
+        stability_values = [v for v in stability_components if v is not None]
+        stability_score = round(sum(stability_values) / len(stability_values), 1) if stability_values else 65.0
+        stability_score = max(20.0, stability_score)
+
+        present_count = sum(v is not None for v in (shoulder_cm, chest_cm, waist_cm, torso_cm))
+        clamped_count = sum(bool(v) for v in (shoulder_clamped, chest_clamped, waist_clamped, torso_clamped))
+        coverage_score = round((present_count / 4.0) * 100.0, 1)
+        coverage_score = max(50.0, coverage_score - (clamped_count * 15.0)) if present_count > 0 else 0.0
+
+        confidence = round(
+            max(0.0, min(100.0, (base_conf * 0.55) + (stability_score * 0.30) + (coverage_score * 0.15))),
+            1,
+        )
+
+        if confidence >= 85:
+            confidence_level = "High"
+        elif confidence >= 65:
+            confidence_level = "Medium"
+        else:
+            confidence_level = "Low"
+
+        reasons = [
+            f"Stability across captures: {stability_score:.0f}/100",
+            f"Measurement coverage: {coverage_score:.0f}/100 ({present_count}/4 key metrics)",
+        ]
+        if side_distinct_score is not None:
+            reasons.append(f"Side-view distinctness: {side_distinct_score:.0f}/100")
+        if clamped_count > 0:
+            reasons.append("Some measurements hit safety bounds; recapturing in better framing can improve precision.")
+        if confidence_level == "High":
+            reasons.append("Front and side captures are consistent, so size confidence is strong.")
+        elif confidence_level == "Medium":
+            reasons.append("Most metrics are reliable; one more recapture can further improve precision.")
+        else:
+            reasons.append("Try recapturing with steadier posture and better framing to improve reliability.")
+
+        summary = f"Size guidance is based on fused front/side measurements with {confidence_level.lower()} confidence."
+
         _fitengine_session["result"] = {
             "recommended_size": meas.get("size_recommendation") or "M",
-            "confidence": meas.get("size_confidence") or 0,
+            "confidence": confidence,
+            "confidence_level": confidence_level,
             "chest_cm": chest_cm,
             "shoulder_cm": shoulder_cm,
             "torso_cm": torso_cm,
@@ -413,8 +638,16 @@ def _finalize_fitengine_session(state: Dict[str, Any]) -> tuple[bool, Dict[str, 
             "collar_cm": collar_cm,
             "collar_in": collar_in,
             "trouser_waist_in": trouser_waist_in,
-            "summary": meas.get("size_description") or "Recommendation generated from captured measurements.",
+            "confidence_breakdown": {
+                "base": round(base_conf, 1),
+                "stability": stability_score,
+                "coverage": coverage_score,
+            },
+            "reasons": reasons,
+            "summary": summary,
             "generated_at": time.time(),
+            "truth_source": bool(truth),
+            "truth_diagnostics": truth.get("diagnostics") if isinstance(truth.get("diagnostics"), dict) else None,
         }
         _fitengine_session["step"] = "complete"
         _fitengine_session["updated_at"] = time.time()
@@ -589,6 +822,15 @@ def _make_flask_app():
         ok, session, err = _capture_fitengine_step("side", current_state)
         code = 200 if ok else 400
         return jsonify({"ok": ok, "session": session, "error": err}), code
+
+    @app.route("/api/fitengine/session/truth", methods=["POST"])
+    def fitengine_truth():
+        data = request.get_json(force=True, silent=True) or {}
+        metrics = data.get("metrics") if isinstance(data, dict) else None
+        if not isinstance(metrics, dict):
+            return jsonify({"ok": False, "error": "metrics payload must be an object"}), 400
+        session = _update_fitengine_truth(metrics)
+        return jsonify({"ok": True, "session": session})
 
     @app.route("/api/fitengine/session/finalize", methods=["POST"])
     def fitengine_finalize():
