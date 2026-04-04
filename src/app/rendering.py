@@ -291,6 +291,45 @@ class GarmentRenderer:
                     logger.warning("GLB/GLTF asset found but trimesh is not installed: %s", mesh_path)
                     return None, None
 
+                scene = None
+
+                def _from_material_texture(scene):
+                    """Fallback path: extract embedded material texture without OpenGL snapshot."""
+                    try:
+                        for geom in scene.geometry.values():
+                            visual = getattr(geom, "visual", None)
+                            material = getattr(visual, "material", None)
+                            if material is None:
+                                continue
+                            image = getattr(material, "image", None)
+                            if image is None:
+                                continue
+
+                            if hasattr(image, "convert"):
+                                rgba = np.array(image.convert("RGBA"), dtype=np.uint8)
+                            else:
+                                arr = np.asarray(image)
+                                if arr.ndim == 2:
+                                    rgba = cv2.cvtColor(arr.astype(np.uint8), cv2.COLOR_GRAY2RGBA)
+                                elif arr.ndim == 3 and arr.shape[2] == 3:
+                                    alpha = np.full((arr.shape[0], arr.shape[1], 1), 255, dtype=np.uint8)
+                                    rgba = np.concatenate([arr.astype(np.uint8), alpha], axis=2)
+                                elif arr.ndim == 3 and arr.shape[2] >= 4:
+                                    rgba = arr[:, :, :4].astype(np.uint8)
+                                else:
+                                    continue
+
+                            bgr = cv2.cvtColor(rgba[:, :, :3], cv2.COLOR_RGB2BGR)
+                            mask = (rgba[:, :, 3] > 10).astype(np.float32)
+                            if float(mask.mean()) < 0.01:
+                                gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+                                mask = (gray > 8).astype(np.float32)
+                            mask = cv2.GaussianBlur(mask, (5, 5), 0)
+                            return _normalize_rgb_mask(bgr, mask)
+                    except Exception as exc:
+                        logger.warning("Failed material-texture extraction for %s: %s", mesh_path, exc)
+                    return None, None
+
                 try:
                     scene_or_mesh = trimesh.load(str(mesh_path), force='scene')
                     scene = scene_or_mesh if isinstance(scene_or_mesh, trimesh.Scene) else scene_or_mesh.scene()
@@ -313,6 +352,9 @@ class GarmentRenderer:
                             return _normalize_rgb_mask(bgr, mask)
                 except Exception as exc:
                     logger.warning("Could not rasterize GLB/GLTF asset %s: %s", mesh_path, exc)
+
+                if scene is not None:
+                    return _from_material_texture(scene)
                 return None, None
 
             if path.suffix.lower() in {".glb", ".gltf"}:

@@ -34,6 +34,8 @@ smplx>=0.1.28          # SMPL/SMPL-X parametric body model + LBS skinning
 
 # --- GPU Rendering ---
 moderngl>=5.0.0        # OpenGL 3.3 offscreen rendering (GPU garment mesh)
+trimesh>=4.0.0         # GLB/GLTF garment ingestion and mesh utilities
+pyglet<2               # trimesh scene.save_image backend compatibility
 
 # --- Phase A: ESRGAN texture upscaling ---
 # realesrgan>=0.3.0   # Real-ESRGAN x4plus (install separately if needed)
