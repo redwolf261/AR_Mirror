@@ -250,6 +250,8 @@ class GarmentRenderer:
                     root / "image.jpg",
                     root / "image.jpeg",
                     root / "14274_00.jpg",
+                    root / "model.glb",
+                    root / "model.gltf",
                     root / "front_medium.png",
                     root / "front_large.png",
                     root / "front_small.png",
@@ -259,13 +261,63 @@ class GarmentRenderer:
                         return candidate
                 pngs = sorted(root.glob("*.png"))
                 jpegs = sorted(root.glob("*.jpg"))
+                glbs = sorted(root.glob("*.glb"))
+                gltfs = sorted(root.glob("*.gltf"))
                 if pngs:
                     return pngs[0]
                 if jpegs:
                     return jpegs[0]
+                if glbs:
+                    return glbs[0]
+                if gltfs:
+                    return gltfs[0]
             return None
 
         def _load_real_asset(path: Path):
+            def _normalize_rgb_mask(bgr: np.ndarray, mask: np.ndarray):
+                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+                mask = np.expand_dims(mask.astype(np.float32), axis=-1)
+                target_size = (512, 384)
+                rgb = cv2.resize(rgb, target_size, interpolation=cv2.INTER_LINEAR)
+                mask = cv2.resize(mask, target_size, interpolation=cv2.INTER_NEAREST)
+                if mask.ndim == 2:
+                    mask = np.expand_dims(mask, axis=-1)
+                return rgb, mask
+
+            def _load_mesh_asset(mesh_path: Path):
+                try:
+                    import trimesh
+                except Exception:
+                    logger.warning("GLB/GLTF asset found but trimesh is not installed: %s", mesh_path)
+                    return None, None
+
+                try:
+                    scene_or_mesh = trimesh.load(str(mesh_path), force='scene')
+                    scene = scene_or_mesh if isinstance(scene_or_mesh, trimesh.Scene) else scene_or_mesh.scene()
+
+                    # Front-view snapshot from the 3D model. Returned as PNG bytes.
+                    png_bytes = scene.save_image(resolution=(1024, 1024), visible=True)
+                    if png_bytes:
+                        raw = np.frombuffer(png_bytes, dtype=np.uint8)
+                        decoded = cv2.imdecode(raw, cv2.IMREAD_UNCHANGED)
+                        if decoded is not None:
+                            if decoded.ndim == 3 and decoded.shape[2] == 4:
+                                alpha = decoded[:, :, 3]
+                                bgr = decoded[:, :, :3]
+                                mask = (alpha > 10).astype(np.float32)
+                            else:
+                                bgr = decoded[:, :, :3]
+                                gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+                                mask = (gray > 8).astype(np.float32)
+                            mask = cv2.GaussianBlur(mask, (5, 5), 0)
+                            return _normalize_rgb_mask(bgr, mask)
+                except Exception as exc:
+                    logger.warning("Could not rasterize GLB/GLTF asset %s: %s", mesh_path, exc)
+                return None, None
+
+            if path.suffix.lower() in {".glb", ".gltf"}:
+                return _load_mesh_asset(path)
+
             img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
             if img is None:
                 return None, None
@@ -293,14 +345,7 @@ class GarmentRenderer:
                 mask = (dist > thr).astype(np.float32)
                 mask = cv2.morphologyEx((mask * 255).astype(np.uint8), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)).astype(np.float32) / 255.0
                 mask = cv2.GaussianBlur(mask, (7, 7), 0)
-            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-            mask = np.expand_dims(mask.astype(np.float32), axis=-1)
-            target_size = (512, 384)
-            rgb = cv2.resize(rgb, target_size, interpolation=cv2.INTER_LINEAR)
-            mask = cv2.resize(mask, target_size, interpolation=cv2.INTER_NEAREST)
-            if mask.ndim == 2:
-                mask = np.expand_dims(mask, axis=-1)
-            return rgb, mask
+            return _normalize_rgb_mask(bgr, mask)
 
         garment_dict = garment_ref if isinstance(garment_ref, dict) else None
         real_asset_path = _pick_real_asset_path(garment_dict) if garment_dict else None

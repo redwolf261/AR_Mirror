@@ -273,11 +273,17 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
             root = Path(image_path)
             if not root.is_absolute():
                 root = Path(image_path)
-            if not root.exists() or not root.is_dir():
+            if not root.exists():
                 return False
-            for candidate in ["image.png", "image.jpg", "image.jpeg", "14274_00.jpg"]:
+            if root.is_file():
+                return root.suffix.lower() in {".png", ".jpg", ".jpeg", ".glb", ".gltf"}
+            if not root.is_dir():
+                return False
+            for candidate in ["image.png", "image.jpg", "image.jpeg", "14274_00.jpg", "model.glb", "model.gltf"]:
                 if (root / candidate).exists():
                     return True
+            if list(root.glob("*.glb")) or list(root.glob("*.gltf")):
+                return True
             return False
 
         inventory_files = [
