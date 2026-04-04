@@ -688,24 +688,20 @@ class GarmentRenderer:
         if _ht is not None:
             _ht.enqueue(frame)
 
-        garment_filename = None
+        garment_ref = None
         # Always prefer the actively selected garment from the runtime garment list.
         # dataset_pairs may contain entries that are not present in local sparse datasets.
         if self.garments:
             idx = self.current_garment_idx % len(self.garments)
-            g = self.garments[idx]
-            if isinstance(g, dict):
-                garment_filename = g.get('file') or g.get('name')
-            elif isinstance(g, str):
-                garment_filename = g
+            garment_ref = self.garments[idx]
         elif self.dataset_pairs:
             idx = self.current_garment_idx % len(self.dataset_pairs)
             pair = self.dataset_pairs[idx]
-            garment_filename = pair.get('garment')
+            garment_ref = pair.get('garment')
 
         cloth_rgb, cloth_mask = (None, None)
-        if garment_filename:
-            cloth_rgb, cloth_mask = self._load_garment_image(garment_filename)
+        if garment_ref:
+            cloth_rgb, cloth_mask = self._load_garment_image(garment_ref)
 
         # Fallback: if chosen garment file is unavailable, try dataset pair entry.
         if cloth_rgb is None and cloth_mask is None and self.dataset_pairs:
