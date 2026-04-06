@@ -62,6 +62,7 @@ _params: Dict[str, Any] = {
     # ── Pipeline timing ──────────────────────────────────────────
     "depth_skip_n":        5,          # run depth every N frames
     "meas_ttl":            5,          # re-measure every N frames
+    "user_height_cm":      170.0,      # explicit scale calibration input
 }
 
 # Param type registry so web UI shows sliders / toggles correctly
@@ -78,6 +79,7 @@ PARAM_META: Dict[str, Dict] = {
     "mask_dilation_px":      {"type": "int",   "min": 1,   "max": 101,  "step": 2,    "label": "Mask dilation (px)"},
     "depth_skip_n":          {"type": "int",   "min": 1,   "max": 60,   "step": 1,    "label": "Depth skip N frames"},
     "meas_ttl":              {"type": "int",   "min": 1,   "max": 30,   "step": 1,    "label": "Measure TTL frames"},
+    "user_height_cm":        {"type": "float", "min": 130, "max": 240,  "step": 1,    "label": "User height (cm)"},
 }
 
 # callbacks registered by tryon_selector to react to param changes

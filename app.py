@@ -208,6 +208,12 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                 self._web_server.register_garment_callback(self._on_web_garment_select)
                 self._web_server.register_param_callback(self._on_web_params_update)
                 self._web_server.start()
+                if self.body_fitter:
+                    try:
+                        init_height = self._web_server.get_param("user_height_cm")
+                        self.body_fitter.set_user_height_cm(float(init_height))
+                    except (TypeError, ValueError):
+                        pass
                 print("     [OK] Web UI available at http://localhost:5051")
                 print("          Open the React UI at http://localhost:3001")
 
@@ -594,6 +600,11 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
         """Apply web-exposed runtime params to rendering controls."""
         if "render_tryon_overlay" in updates:
             self.render_tryon_overlay = bool(updates.get("render_tryon_overlay"))
+        if "user_height_cm" in updates and self.body_fitter:
+            try:
+                self.body_fitter.set_user_height_cm(float(updates.get("user_height_cm")))
+            except (TypeError, ValueError):
+                pass
 
     def _on_garment_change(self):
         """Close current flywheel session and open a new one for the new garment."""

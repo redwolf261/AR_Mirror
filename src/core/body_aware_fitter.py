@@ -14,6 +14,7 @@ from typing import Optional, Tuple, Dict, Any
 import os
 import time
 import logging
+from collections import deque
 
 from src.core.landmark_logger import LandmarkStabilityLogger
 from src.core.landmark_smoother import LandmarkSmoother
@@ -77,6 +78,17 @@ class BodyAwareGarmentFitter:
         # Camera calibration state
         # Estimated focal length (pixels).  None = not yet calibrated.
         self._focal_length_px: Optional[float] = None
+        self._user_height_cm: Optional[float] = None
+
+        # Per-metric robust stabilisation (median over short window)
+        self._metric_windows = {
+            'shoulder_width': deque(maxlen=10),
+            'torso_height': deque(maxlen=10),
+            'chest_width': deque(maxlen=10),
+            'hip_width': deque(maxlen=10),
+            'waist_width': deque(maxlen=10),
+        }
+        self._stable_metrics: Dict[str, float] = {}
         
         # Download model if needed
         if not os.path.exists(model_path):
@@ -95,6 +107,59 @@ class BodyAwareGarmentFitter:
         self.detector = vision.PoseLandmarker.create_from_options(options)
         
         print("[OK] Body-aware fitter initialized")
+
+    def set_user_height_cm(self, height_cm: Optional[float]) -> None:
+        """Set user height for scale calibration (when available from UI/workflow)."""
+        if height_cm is None:
+            self._user_height_cm = None
+            return
+        try:
+            h = float(height_cm)
+            if 130.0 <= h <= 240.0:
+                self._user_height_cm = h
+        except (TypeError, ValueError):
+            return
+
+    @staticmethod
+    def _landmark_px(landmark, frame_w: int, frame_h: int) -> np.ndarray:
+        return np.array([landmark.x * frame_w, landmark.y * frame_h], dtype=np.float32)
+
+    @staticmethod
+    def _safe_distance(a: np.ndarray, b: np.ndarray) -> float:
+        return float(np.linalg.norm(a - b))
+
+    @staticmethod
+    def _clip_conf(value: float) -> float:
+        return float(np.clip(value, 0.0, 1.0))
+
+    def _robust_metric(self, key: str, value: float, confidence: float, min_conf: float = 0.45) -> float:
+        """Keep a median-stable value per metric; freeze on low confidence frames."""
+        window = self._metric_windows[key]
+        if confidence >= min_conf and np.isfinite(value) and value > 0:
+            window.append(float(value))
+            self._stable_metrics[key] = float(np.median(window))
+        if key in self._stable_metrics:
+            return self._stable_metrics[key]
+        return float(value)
+
+    def _sample_mask_band_width(self, body_mask: np.ndarray, y_px: int) -> Tuple[float, float]:
+        """Sample silhouette width around a row band; returns (width_px, confidence)."""
+        if body_mask is None or body_mask.size == 0:
+            return 0.0, 0.0
+        h, _ = body_mask.shape[:2]
+        y0 = max(0, y_px - 2)
+        y1 = min(h, y_px + 3)
+        widths = []
+        for y in range(y0, y1):
+            row = body_mask[y]
+            xs = np.where(row > 0)[0]
+            if xs.size > 1:
+                widths.append(float(xs[-1] - xs[0]))
+        if not widths:
+            return 0.0, 0.0
+        width = float(np.median(widths))
+        coverage = min(1.0, len(widths) / 5.0)
+        return width, coverage
     
     def extract_body_measurements(self, frame: np.ndarray) -> Optional[dict]:
         """
@@ -164,9 +229,27 @@ class BodyAwareGarmentFitter:
         
         self.last_detection_status = 'detected'
         
-        # Calculate measurements in pixels
-        shoulder_width = abs(right_shoulder.x - left_shoulder.x) * w
-        torso_height = abs(left_shoulder.y - left_hip.y) * h
+        # Geometric points in pixel space
+        ls = self._landmark_px(left_shoulder, w, h)
+        rs = self._landmark_px(right_shoulder, w, h)
+        lh = self._landmark_px(left_hip, w, h)
+        rh = self._landmark_px(right_hip, w, h)
+
+        shoulder_mid = (ls + rs) * 0.5
+        hip_mid = (lh + rh) * 0.5
+
+        # Rotation compensation from pseudo-3D shoulder yaw
+        yaw_rad = float(np.arctan2((right_shoulder.z - left_shoulder.z), (right_shoulder.x - left_shoulder.x + 1e-6)))
+        yaw_deg = float(np.degrees(yaw_rad))
+        cos_yaw = max(0.55, float(np.cos(np.clip(abs(yaw_rad), 0.0, np.deg2rad(65.0)))))
+
+        # Raw measurements in pixels (frontal-corrected where relevant)
+        shoulder_width_raw = abs(right_shoulder.x - left_shoulder.x) * w
+        shoulder_width = shoulder_width_raw / cos_yaw
+        torso_height_raw = self._safe_distance(shoulder_mid, hip_mid)
+        torso_height = torso_height_raw
+        hip_width_raw = abs(right_hip.x - left_hip.x) * w
+        hip_width = hip_width_raw / cos_yaw
 
         # --- Depth normalisation DISABLED ---
         # Normalising to a "canonical" shoulder width caused the garment to
@@ -178,10 +261,10 @@ class BodyAwareGarmentFitter:
         # )
 
         # Calculate torso bounding box
-        torso_x1 = int(min(left_shoulder.x, left_hip.x) * w)
-        torso_y1 = int(left_shoulder.y * h)
-        torso_x2 = int(max(right_shoulder.x, right_hip.x) * w)
-        torso_y2 = int(left_hip.y * h)
+        torso_x1 = int(max(0, min(left_shoulder.x, left_hip.x) * w))
+        torso_y1 = int(max(0, min(left_shoulder.y, right_shoulder.y) * h))
+        torso_x2 = int(min(w - 1, max(right_shoulder.x, right_hip.x) * w))
+        torso_y2 = int(min(h - 1, max(left_hip.y, right_hip.y) * h))
         
         # Get body segmentation mask
         body_mask = None
@@ -189,24 +272,105 @@ class BodyAwareGarmentFitter:
             mask = detection_result.segmentation_masks[0].numpy_view()
             body_mask = (mask > 0.5).astype(np.uint8)
         
+        # Measurement confidence per metric
+        torso_sym = self._safe_distance(ls, lh) / max(self._safe_distance(rs, rh), 1e-6)
+        torso_sym_score = self._clip_conf(1.0 - min(abs(1.0 - torso_sym), 1.0))
+        frontality_score = self._clip_conf((cos_yaw - 0.55) / 0.45)
+
+        shoulder_conf = self._clip_conf(min(left_shoulder.visibility, right_shoulder.visibility) * (0.55 + 0.45 * frontality_score))
+        torso_conf = self._clip_conf(min(left_shoulder.visibility, right_shoulder.visibility, left_hip.visibility, right_hip.visibility) * torso_sym_score)
+        hip_conf = self._clip_conf(min(left_hip.visibility, right_hip.visibility) * (0.55 + 0.45 * frontality_score))
+
+        # Mask-based chest / waist estimation
+        chest_y = int(np.clip((shoulder_mid[1] + torso_height * 0.20), 0, h - 1))
+        waist_y = int(np.clip((hip_mid[1] - torso_height * 0.20), 0, h - 1))
+        chest_width_mask, chest_mask_conf = self._sample_mask_band_width(body_mask, chest_y) if body_mask is not None else (0.0, 0.0)
+        waist_width_mask, waist_mask_conf = self._sample_mask_band_width(body_mask, waist_y) if body_mask is not None else (0.0, 0.0)
+
+        # Fallback to geometric proxies when mask sampling is unavailable
+        chest_width_raw = chest_width_mask if chest_width_mask > 0 else shoulder_width * 1.08
+        waist_width_raw = waist_width_mask if waist_width_mask > 0 else hip_width * 0.92
+
+        # Clothing inflation compensation for silhouette-derived waist
+        waist_width_raw *= 0.88
+
+        chest_conf = self._clip_conf(min(torso_conf, chest_mask_conf if chest_width_mask > 0 else torso_conf * 0.7))
+        waist_conf = self._clip_conf(min(torso_conf, waist_mask_conf if waist_width_mask > 0 else torso_conf * 0.6) * (0.55 + 0.45 * frontality_score))
+
+        # Robust temporal stabilisation per metric
+        shoulder_width = self._robust_metric('shoulder_width', shoulder_width, shoulder_conf)
+        torso_height = self._robust_metric('torso_height', torso_height, torso_conf)
+        chest_width = self._robust_metric('chest_width', chest_width_raw / cos_yaw, chest_conf)
+        hip_width = self._robust_metric('hip_width', hip_width, hip_conf)
+        waist_width = self._robust_metric('waist_width', waist_width_raw / cos_yaw, waist_conf)
+
+        # Scale calibration: prefer user-provided height, fallback to shoulder prior
+        nose = landmarks[0] if len(landmarks) > 0 else None
+        left_ankle = landmarks[27] if len(landmarks) > 27 else None
+        right_ankle = landmarks[28] if len(landmarks) > 28 else None
+        px_per_cm: Optional[float] = None
+        est_height_cm: Optional[float] = None
+
+        if nose and left_ankle and right_ankle and self._user_height_cm is not None:
+            if min(nose.visibility, left_ankle.visibility, right_ankle.visibility) > 0.45:
+                nose_px = self._landmark_px(nose, w, h)
+                ankle_mid_px = (self._landmark_px(left_ankle, w, h) + self._landmark_px(right_ankle, w, h)) * 0.5
+                full_body_px = self._safe_distance(nose_px, ankle_mid_px)
+                if full_body_px > 50:
+                    px_per_cm = full_body_px / self._user_height_cm
+                    est_height_cm = float(self._user_height_cm)
+
+        if px_per_cm is None:
+            # Shoulder prior (approximate fallback, explicitly lower confidence)
+            px_per_cm = shoulder_width / 42.0
+            est_height_cm = None
+
+        def _to_cm(px: float) -> float:
+            return float(px / max(px_per_cm or 1e-6, 1e-6))
+
+        shoulder_width_cm = _to_cm(shoulder_width)
+        chest_cm = _to_cm(chest_width)
+        torso_length_cm = _to_cm(torso_height)
+        hip_cm = _to_cm(hip_width)
+        waist_cm = _to_cm(waist_width)
+
+        metric_confidence = {
+            'shoulder': shoulder_conf,
+            'chest': chest_conf,
+            'torso': torso_conf,
+            'hip': hip_conf,
+            'waist': waist_conf,
+            'frontality': frontality_score,
+        }
+
         # Import size recommendation system
         try:
-            print(f"DEBUG: Starting size recommendation for measurements: shoulder_width={shoulder_width:.1f}, torso_height={torso_height:.1f}")
             from src.core.size_recommendation import get_size_recommendation, format_size_recommendation
 
             measurements = {
                 'shoulder_width': shoulder_width,
                 'torso_height': torso_height,
+                'chest_width': chest_width,
+                'waist_width': waist_width,
+                'hip_width': hip_width,
                 'torso_box': (torso_x1, torso_y1, torso_x2, torso_y2),
                 'body_mask': body_mask,
                 'landmarks': landmarks,
-                'confidence': avg_confidence
+                'confidence': float(np.mean(list(metric_confidence.values())[:5])),
+                'measurement_confidence': metric_confidence,
+                'yaw_deg': yaw_deg,
+                'user_height_cm': self._user_height_cm,
+                'height_cm': est_height_cm,
+                'shoulder_width_cm': shoulder_width_cm,
+                'chest_cm': chest_cm,
+                'torso_length_cm': torso_length_cm,
+                'hip_cm': hip_cm,
+                'waist_cm': waist_cm,
+                'cm_scale_source': 'height_calibrated' if self._user_height_cm is not None and est_height_cm is not None else 'shoulder_prior',
             }
 
-            print(f"DEBUG: Calling get_size_recommendation...")
             # Get size recommendation
             size_rec = get_size_recommendation(measurements)
-            print(f"DEBUG: Size recommendation result: {size_rec['recommended_size']} (confidence: {size_rec['confidence']:.2f})")
 
             measurements.update({
                 'size_recommendation': size_rec['recommended_size'],
@@ -220,24 +384,32 @@ class BodyAwareGarmentFitter:
             measurements.update({
                 'shoulder_width_cm': size_rec['measurements_cm']['shoulder_width'],
                 'chest_cm': size_rec['measurements_cm']['chest_width'],
-                'torso_length_cm': size_rec['measurements_cm']['torso_length']
+                'torso_length_cm': size_rec['measurements_cm']['torso_length'],
             })
-
-            print(f"DEBUG: Final measurements with size data: size={measurements.get('size_recommendation')}")
 
         except Exception as e:
             # Fallback if size recommendation fails
-            print(f"DEBUG: Size recommendation FAILED with error: {e}")
-            import traceback
-            traceback.print_exc()
             logger.debug(f"Size recommendation failed: {e}")
             measurements = {
                 'shoulder_width': shoulder_width,
                 'torso_height': torso_height,
+                'chest_width': chest_width,
+                'waist_width': waist_width,
+                'hip_width': hip_width,
                 'torso_box': (torso_x1, torso_y1, torso_x2, torso_y2),
                 'body_mask': body_mask,
                 'landmarks': landmarks,
-                'confidence': avg_confidence,
+                'confidence': float(np.mean(list(metric_confidence.values())[:5])),
+                'measurement_confidence': metric_confidence,
+                'yaw_deg': yaw_deg,
+                'user_height_cm': self._user_height_cm,
+                'height_cm': est_height_cm,
+                'shoulder_width_cm': shoulder_width_cm,
+                'chest_cm': chest_cm,
+                'torso_length_cm': torso_length_cm,
+                'hip_cm': hip_cm,
+                'waist_cm': waist_cm,
+                'cm_scale_source': 'height_calibrated' if self._user_height_cm is not None and est_height_cm is not None else 'shoulder_prior',
                 'size_recommendation': 'M',  # Default fallback
                 'size_confidence': 0.5,
                 'size_description': 'Size estimation unavailable'
