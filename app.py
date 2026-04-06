@@ -214,6 +214,11 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                         self.body_fitter.set_user_height_cm(float(init_height))
                     except (TypeError, ValueError):
                         pass
+                    try:
+                        init_square = self._web_server.get_param("calibration_square_cm")
+                        self.body_fitter.set_calibration_square_cm(float(init_square))
+                    except (TypeError, ValueError):
+                        pass
                 print("     [OK] Web UI available at http://localhost:5051")
                 print("          Open the React UI at http://localhost:3001")
 
@@ -603,6 +608,11 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
         if "user_height_cm" in updates and self.body_fitter:
             try:
                 self.body_fitter.set_user_height_cm(float(updates.get("user_height_cm")))
+            except (TypeError, ValueError):
+                pass
+        if "calibration_square_cm" in updates and self.body_fitter:
+            try:
+                self.body_fitter.set_calibration_square_cm(float(updates.get("calibration_square_cm")))
             except (TypeError, ValueError):
                 pass
 

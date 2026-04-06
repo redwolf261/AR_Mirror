@@ -1,45 +1,45 @@
-"""
-AR Mirror - Size Recommendation Engine
-
-Provides clothing size recommendations (S/M/L/XL/XXL) based on real-time body measurements.
-"""
+"""AR Mirror decision layer: size scoring + fit classification."""
 
 import logging
-from typing import Optional, Dict, Tuple
-import numpy as np
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 
-# Standard clothing size charts (in centimeters)
-# Based on average US/EU sizing standards
+# Approximate retail size chart (cm). Chest/waist are circumferences.
 SIZE_CHART = {
     "XS": {
         "chest_min": 81, "chest_max": 86,
+        "waist_min": 67, "waist_max": 73,
         "shoulder_min": 38, "shoulder_max": 41,
         "torso_length_min": 60, "torso_length_max": 65,
     },
     "S": {
         "chest_min": 86, "chest_max": 91,
+        "waist_min": 73, "waist_max": 79,
         "shoulder_min": 41, "shoulder_max": 44,
         "torso_length_min": 65, "torso_length_max": 68,
     },
     "M": {
         "chest_min": 91, "chest_max": 97,
+        "waist_min": 79, "waist_max": 85,
         "shoulder_min": 44, "shoulder_max": 47,
         "torso_length_min": 68, "torso_length_max": 71,
     },
     "L": {
         "chest_min": 97, "chest_max": 102,
+        "waist_min": 85, "waist_max": 91,
         "shoulder_min": 47, "shoulder_max": 50,
         "torso_length_min": 71, "torso_length_max": 74,
     },
     "XL": {
         "chest_min": 102, "chest_max": 107,
+        "waist_min": 91, "waist_max": 97,
         "shoulder_min": 50, "shoulder_max": 53,
         "torso_length_min": 74, "torso_length_max": 77,
     },
     "XXL": {
         "chest_min": 107, "chest_max": 112,
+        "waist_min": 97, "waist_max": 103,
         "shoulder_min": 53, "shoulder_max": 56,
         "torso_length_min": 77, "torso_length_max": 80,
     },
@@ -67,6 +67,30 @@ def pixels_to_cm(pixel_measurement: float, measurement_type: str) -> float:
     factor = PIXEL_TO_CM_FACTORS.get(measurement_type, 0.4)
     return pixel_measurement * factor
 
+def _clamp01(v: float) -> float:
+    return max(0.0, min(1.0, float(v)))
+
+
+def _range_mid(mn: float, mx: float) -> float:
+    return (mn + mx) * 0.5
+
+
+def _norm_error(v: float, mn: float, mx: float, tol: float) -> float:
+    """0 error inside range center, grows gradually outside range by tolerance."""
+    target = _range_mid(mn, mx)
+    return abs(v - target) / max(tol, 1e-6)
+
+
+def _fit_class_from_ease(ease_cm: float) -> str:
+    if ease_cm < -2.0:
+        return "Tight"
+    if ease_cm < 4.0:
+        return "Perfect"
+    if ease_cm < 9.0:
+        return "Relaxed"
+    return "Loose"
+
+
 def get_size_recommendation(body_measurements: Dict) -> Dict:
     """
     Get clothing size recommendation based on body measurements.
@@ -88,7 +112,7 @@ def get_size_recommendation(body_measurements: Dict) -> Dict:
     """
     logger.debug("Calculating size recommendation...")
 
-    # Convert pixel measurements to cm if not already provided
+    # Convert or read measurements in cm
     measurements_cm = {}
 
     # Shoulder width
@@ -101,13 +125,24 @@ def get_size_recommendation(body_measurements: Dict) -> Dict:
     else:
         measurements_cm["shoulder_width"] = 45.0  # Default fallback
 
-    # Chest width (estimate from shoulder width if not provided)
-    if "chest_cm" in body_measurements:
-        measurements_cm["chest_width"] = body_measurements["chest_cm"]
+    # Chest: prefer circumference if available
+    if "chest_circumference_cm" in body_measurements:
+        measurements_cm["chest_width"] = float(body_measurements["chest_circumference_cm"])
+    elif "chest_cm" in body_measurements:
+        measurements_cm["chest_width"] = float(body_measurements["chest_cm"])
     elif "chest_width" in body_measurements:
         measurements_cm["chest_width"] = pixels_to_cm(
             body_measurements["chest_width"], "chest_width"
         )
+        # Waist: prefer circumference if available
+        if "waist_circumference_cm" in body_measurements:
+            measurements_cm["waist_width"] = float(body_measurements["waist_circumference_cm"])
+        elif "waist_cm" in body_measurements:
+            measurements_cm["waist_width"] = float(body_measurements["waist_cm"])
+        else:
+            # torso proxy fallback
+            measurements_cm["waist_width"] = measurements_cm["chest_width"] * 0.86
+
     else:
         # Estimate chest as ~1.15x shoulder width
         measurements_cm["chest_width"] = measurements_cm["shoulder_width"] * 1.15
@@ -124,56 +159,58 @@ def get_size_recommendation(body_measurements: Dict) -> Dict:
 
     logger.debug(f"Measurements (cm): {measurements_cm}")
 
-    # Calculate fit scores for each size
+    # Decision layer: weighted fit scoring by normalized measurement errors
     size_scores = {}
+    fit_by_size = {}
+
+    # Per-metric reliability weighting from inference layer if present
+    mconf = body_measurements.get("measurement_confidence") or {}
+    conf_chest = float(mconf.get("chest", 0.8))
+    conf_waist = float(mconf.get("waist", 0.7))
+    conf_shoulder = float(mconf.get("shoulder", 0.85))
+    conf_torso = float(mconf.get("torso", 0.75))
+
+    base_weights = {
+        "chest": 0.38,
+        "waist": 0.27,
+        "shoulder": 0.22,
+        "torso": 0.13,
+    }
+    weighted_sum = (
+        base_weights["chest"] * max(conf_chest, 0.35)
+        + base_weights["waist"] * max(conf_waist, 0.35)
+        + base_weights["shoulder"] * max(conf_shoulder, 0.35)
+        + base_weights["torso"] * max(conf_torso, 0.35)
+    )
 
     for size, ranges in SIZE_CHART.items():
-        scores = []
+        e_chest = _norm_error(measurements_cm["chest_width"], ranges["chest_min"], ranges["chest_max"], tol=8.0)
+        e_waist = _norm_error(measurements_cm["waist_width"], ranges["waist_min"], ranges["waist_max"], tol=9.0)
+        e_shoulder = _norm_error(measurements_cm["shoulder_width"], ranges["shoulder_min"], ranges["shoulder_max"], tol=4.0)
+        e_torso = _norm_error(measurements_cm["torso_length"], ranges["torso_length_min"], ranges["torso_length_max"], tol=6.0)
 
-        # Chest fit score
-        chest_cm = measurements_cm["chest_width"]
-        if ranges["chest_min"] <= chest_cm <= ranges["chest_max"]:
-            chest_score = 1.0
-        else:
-            # Calculate distance from range
-            if chest_cm < ranges["chest_min"]:
-                distance = ranges["chest_min"] - chest_cm
-            else:
-                distance = chest_cm - ranges["chest_max"]
-            chest_score = max(0.0, 1.0 - distance / 10.0)  # Penalty per cm outside range
-        scores.append(chest_score * 0.5)  # 50% weight
+        weighted_error = (
+            base_weights["chest"] * max(conf_chest, 0.35) * e_chest
+            + base_weights["waist"] * max(conf_waist, 0.35) * e_waist
+            + base_weights["shoulder"] * max(conf_shoulder, 0.35) * e_shoulder
+            + base_weights["torso"] * max(conf_torso, 0.35) * e_torso
+        ) / max(weighted_sum, 1e-6)
 
-        # Shoulder fit score
-        shoulder_cm = measurements_cm["shoulder_width"]
-        if ranges["shoulder_min"] <= shoulder_cm <= ranges["shoulder_max"]:
-            shoulder_score = 1.0
-        else:
-            if shoulder_cm < ranges["shoulder_min"]:
-                distance = ranges["shoulder_min"] - shoulder_cm
-            else:
-                distance = shoulder_cm - ranges["shoulder_max"]
-            shoulder_score = max(0.0, 1.0 - distance / 5.0)
-        scores.append(shoulder_score * 0.3)  # 30% weight
+        # Score in [0,1], where 1 is best fit
+        score = _clamp01(1.0 - (weighted_error / 1.25))
+        size_scores[size] = score
 
-        # Torso length fit score
-        torso_cm = measurements_cm["torso_length"]
-        if ranges["torso_length_min"] <= torso_cm <= ranges["torso_length_max"]:
-            torso_score = 1.0
-        else:
-            if torso_cm < ranges["torso_length_min"]:
-                distance = ranges["torso_length_min"] - torso_cm
-            else:
-                distance = torso_cm - ranges["torso_length_max"]
-            torso_score = max(0.0, 1.0 - distance / 8.0)
-        scores.append(torso_score * 0.2)  # 20% weight
-
-        # Overall size score
-        size_scores[size] = sum(scores)
-        logger.debug(f"Size {size}: score {size_scores[size]:.2f}")
+        chest_mid = _range_mid(ranges["chest_min"], ranges["chest_max"])
+        chest_ease = chest_mid - measurements_cm["chest_width"]
+        fit_by_size[size] = {
+            "chest_ease_cm": round(chest_ease, 2),
+            "fit_class": _fit_class_from_ease(chest_ease),
+            "weighted_error": round(weighted_error, 4),
+        }
 
     # Find best fit
     best_size = max(size_scores.keys(), key=lambda k: size_scores[k])
-    confidence = size_scores[best_size]
+    confidence = float(size_scores[best_size])
 
     logger.info(f"Recommended size: {best_size} (confidence: {confidence:.2f})")
 
@@ -181,6 +218,8 @@ def get_size_recommendation(body_measurements: Dict) -> Dict:
         "recommended_size": best_size,
         "confidence": confidence,
         "all_sizes": size_scores,
+        "fit_by_size": fit_by_size,
+        "fit_classification": fit_by_size[best_size]["fit_class"],
         "measurements_cm": measurements_cm,
         "size_chart": SIZE_CHART[best_size]  # Include the size chart for the recommended size
     }
@@ -209,8 +248,10 @@ def format_size_recommendation(size_rec: Dict) -> str:
     else:
         confidence_text = "Check measurements"
 
-    return (f"Size: {size} ({confidence_text})\n"
+        fit_class = size_rec.get("fit_classification", "Perfect")
+        return (f"Size: {size} ({fit_class}, {confidence_text})\n"
             f"Chest: {measurements['chest_width']:.0f}cm | "
+            f"Waist: {measurements.get('waist_width', 0):.0f}cm | "
             f"Shoulders: {measurements['shoulder_width']:.0f}cm | "
             f"Length: {measurements['torso_length']:.0f}cm")
 

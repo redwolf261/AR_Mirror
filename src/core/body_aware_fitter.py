@@ -49,6 +49,10 @@ class BodyAwareGarmentFitter:
     _FOCAL_EMA_ALPHA: float = 0.05
     # If estimated focal length deviates by more than this fraction, run EMA
     _FOCAL_RECAL_THRESHOLD: float = 0.15
+    # Observation-layer quality gates
+    _CRITICAL_VISIBILITY: float = 0.60
+    _MIN_BRIGHTNESS: float = 28.0
+    _MAX_YAW_DEG: float = 25.0
 
     def __init__(self, model_path: str = 'pose_landmarker_lite.task'):
         """Initialize MediaPipe pose detector"""
@@ -79,6 +83,9 @@ class BodyAwareGarmentFitter:
         # Estimated focal length (pixels).  None = not yet calibrated.
         self._focal_length_px: Optional[float] = None
         self._user_height_cm: Optional[float] = None
+        self._scale_px_to_cm: Optional[float] = None
+        self._calibration_square_cm: float = 10.0
+        self._calibration_source: str = "uninitialized"
 
         # Per-metric robust stabilisation (median over short window)
         self._metric_windows = {
@@ -89,6 +96,13 @@ class BodyAwareGarmentFitter:
             'waist_width': deque(maxlen=10),
         }
         self._stable_metrics: Dict[str, float] = {}
+        self._metric_var_thresholds = {
+            'shoulder_width': 80.0,
+            'torso_height': 120.0,
+            'chest_width': 90.0,
+            'hip_width': 100.0,
+            'waist_width': 90.0,
+        }
         
         # Download model if needed
         if not os.path.exists(model_path):
@@ -120,6 +134,59 @@ class BodyAwareGarmentFitter:
         except (TypeError, ValueError):
             return
 
+    def set_calibration_square_cm(self, square_cm: float) -> None:
+        try:
+            v = float(square_cm)
+            if 2.0 <= v <= 50.0:
+                self._calibration_square_cm = v
+        except (TypeError, ValueError):
+            return
+
+    def set_scale_px_to_cm(self, scale_px_to_cm: Optional[float], source: str = "manual") -> None:
+        if scale_px_to_cm is None:
+            self._scale_px_to_cm = None
+            self._calibration_source = "unset"
+            return
+        try:
+            s = float(scale_px_to_cm)
+            if 0.5 <= s <= 100.0:
+                self._scale_px_to_cm = s
+                self._calibration_source = source
+        except (TypeError, ValueError):
+            return
+
+    def _try_red_square_calibration(self, frame_bgr: np.ndarray) -> None:
+        """Estimate px/cm from a red square marker with known side length."""
+        if self._scale_px_to_cm is not None:
+            return
+        hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
+        # Red wraps HSV hue space
+        mask1 = cv2.inRange(hsv, np.array([0, 90, 70], dtype=np.uint8), np.array([12, 255, 255], dtype=np.uint8))
+        mask2 = cv2.inRange(hsv, np.array([168, 90, 70], dtype=np.uint8), np.array([180, 255, 255], dtype=np.uint8))
+        mask = cv2.bitwise_or(mask1, mask2)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return
+        cnt = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(cnt)
+        if area < 500:
+            return
+        peri = cv2.arcLength(cnt, True)
+        approx = cv2.approxPolyDP(cnt, 0.03 * peri, True)
+        if len(approx) != 4:
+            return
+        x, y, rw, rh = cv2.boundingRect(approx)
+        ar = rw / max(rh, 1)
+        if not (0.80 <= ar <= 1.20):
+            return
+        side_px = float((rw + rh) * 0.5)
+        if side_px < 10:
+            return
+        self._scale_px_to_cm = side_px / max(self._calibration_square_cm, 1e-6)
+        self._calibration_source = "red_square"
+
     @staticmethod
     def _landmark_px(landmark, frame_w: int, frame_h: int) -> np.ndarray:
         return np.array([landmark.x * frame_w, landmark.y * frame_h], dtype=np.float32)
@@ -137,6 +204,11 @@ class BodyAwareGarmentFitter:
         window = self._metric_windows[key]
         if confidence >= min_conf and np.isfinite(value) and value > 0:
             window.append(float(value))
+            if len(window) >= 5:
+                var = float(np.var(np.array(window, dtype=np.float32)))
+                if var > self._metric_var_thresholds.get(key, 100.0):
+                    # High temporal variance -> hold last stable value
+                    return self._stable_metrics.get(key, float(np.median(window)))
             self._stable_metrics[key] = float(np.median(window))
         if key in self._stable_metrics:
             return self._stable_metrics[key]
@@ -167,6 +239,15 @@ class BodyAwareGarmentFitter:
         Returns dict with shoulder_width, torso_height, torso_box, body_mask
         """
         h, w = frame.shape[:2]
+
+        # Observation gate 1: lighting quality
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if float(np.mean(gray)) < self._MIN_BRIGHTNESS:
+            self.last_detection_status = 'poor_lighting'
+            return None
+
+        # Opportunistic physical calibration (runs until a valid red square is seen)
+        self._try_red_square_calibration(frame)
         
         # Convert to RGB
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -215,14 +296,23 @@ class BodyAwareGarmentFitter:
         left_hip = landmarks[23]        # Left hip
         right_hip = landmarks[24]       # Right hip
         
-        # Track landmark confidence
-        avg_confidence = (
-            left_shoulder.visibility + right_shoulder.visibility +
-            left_hip.visibility + right_hip.visibility
-        ) / 4.0
+        # Track landmark confidence (critical set)
+        nose = landmarks[0] if len(landmarks) > 0 else None
+        left_ankle = landmarks[27] if len(landmarks) > 27 else None
+        right_ankle = landmarks[28] if len(landmarks) > 28 else None
+
+        critical_vis = [left_shoulder.visibility, right_shoulder.visibility, left_hip.visibility, right_hip.visibility]
+        if nose is not None:
+            critical_vis.append(nose.visibility)
+        if left_ankle is not None:
+            critical_vis.append(left_ankle.visibility)
+        if right_ankle is not None:
+            critical_vis.append(right_ankle.visibility)
+
+        avg_confidence = float(np.mean(np.array(critical_vis, dtype=np.float32)))
         self.last_confidence = avg_confidence
-        
-        if avg_confidence < 0.3:
+
+        if min(critical_vis) < self._CRITICAL_VISIBILITY:
             self.last_detection_status = 'low_confidence'
             logger.debug(f"Low landmark confidence: {avg_confidence:.2f}")
             return None
@@ -266,11 +356,15 @@ class BodyAwareGarmentFitter:
         torso_x2 = int(min(w - 1, max(right_shoulder.x, right_hip.x) * w))
         torso_y2 = int(min(h - 1, max(left_hip.y, right_hip.y) * h))
         
-        # Get body segmentation mask
+        # Get body segmentation mask (conditioned silhouette)
         body_mask = None
         if detection_result.segmentation_masks:
             mask = detection_result.segmentation_masks[0].numpy_view()
             body_mask = (mask > 0.5).astype(np.uint8)
+            k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+            body_mask = cv2.morphologyEx(body_mask, cv2.MORPH_CLOSE, k, iterations=1)
+            body_mask = cv2.GaussianBlur((body_mask * 255).astype(np.uint8), (7, 7), 1.5)
+            body_mask = (body_mask > 120).astype(np.uint8)
         
         # Measurement confidence per metric
         torso_sym = self._safe_distance(ls, lh) / max(self._safe_distance(rs, rh), 1e-6)
@@ -287,12 +381,18 @@ class BodyAwareGarmentFitter:
         chest_width_mask, chest_mask_conf = self._sample_mask_band_width(body_mask, chest_y) if body_mask is not None else (0.0, 0.0)
         waist_width_mask, waist_mask_conf = self._sample_mask_band_width(body_mask, waist_y) if body_mask is not None else (0.0, 0.0)
 
-        # Fallback to geometric proxies when mask sampling is unavailable
-        chest_width_raw = chest_width_mask if chest_width_mask > 0 else shoulder_width * 1.08
-        waist_width_raw = waist_width_mask if waist_width_mask > 0 else hip_width * 0.92
+        # Multi-signal fusion (landmark trusted > silhouette)
+        chest_landmark = shoulder_width * 1.10
+        waist_landmark = hip_width * 0.88
+        looseness = (waist_width_mask / max(waist_landmark, 1e-6)) if waist_width_mask > 0 else 1.0
+        clothing_correction = 0.90 if looseness <= 1.15 else 0.85
+        silhouette_w_chest = chest_width_mask * clothing_correction if chest_width_mask > 0 else chest_landmark
+        silhouette_w_waist = waist_width_mask * clothing_correction if waist_width_mask > 0 else waist_landmark
+        chest_width_raw = 0.70 * chest_landmark + 0.30 * silhouette_w_chest
+        waist_width_raw = 0.75 * waist_landmark + 0.25 * silhouette_w_waist
 
         # Clothing inflation compensation for silhouette-derived waist
-        waist_width_raw *= 0.88
+        waist_width_raw *= clothing_correction
 
         chest_conf = self._clip_conf(min(torso_conf, chest_mask_conf if chest_width_mask > 0 else torso_conf * 0.7))
         waist_conf = self._clip_conf(min(torso_conf, waist_mask_conf if waist_width_mask > 0 else torso_conf * 0.6) * (0.55 + 0.45 * frontality_score))
@@ -304,26 +404,32 @@ class BodyAwareGarmentFitter:
         hip_width = self._robust_metric('hip_width', hip_width, hip_conf)
         waist_width = self._robust_metric('waist_width', waist_width_raw / cos_yaw, waist_conf)
 
-        # Scale calibration: prefer user-provided height, fallback to shoulder prior
-        nose = landmarks[0] if len(landmarks) > 0 else None
-        left_ankle = landmarks[27] if len(landmarks) > 27 else None
-        right_ankle = landmarks[28] if len(landmarks) > 28 else None
+        # Scale calibration priority:
+        # 1) Red square physical calibration
+        # 2) User height normalization
+        # 3) Shoulder prior fallback
         px_per_cm: Optional[float] = None
         est_height_cm: Optional[float] = None
 
-        if nose and left_ankle and right_ankle and self._user_height_cm is not None:
-            if min(nose.visibility, left_ankle.visibility, right_ankle.visibility) > 0.45:
+        if self._scale_px_to_cm is not None:
+            px_per_cm = float(self._scale_px_to_cm)
+            self._calibration_source = self._calibration_source or "red_square"
+
+        if px_per_cm is None and nose and left_ankle and right_ankle and self._user_height_cm is not None:
+            if min(nose.visibility, left_ankle.visibility, right_ankle.visibility) > self._CRITICAL_VISIBILITY:
                 nose_px = self._landmark_px(nose, w, h)
                 ankle_mid_px = (self._landmark_px(left_ankle, w, h) + self._landmark_px(right_ankle, w, h)) * 0.5
                 full_body_px = self._safe_distance(nose_px, ankle_mid_px)
                 if full_body_px > 50:
                     px_per_cm = full_body_px / self._user_height_cm
                     est_height_cm = float(self._user_height_cm)
+                    self._calibration_source = "user_height"
 
         if px_per_cm is None:
             # Shoulder prior (approximate fallback, explicitly lower confidence)
             px_per_cm = shoulder_width / 42.0
             est_height_cm = None
+            self._calibration_source = "shoulder_prior"
 
         def _to_cm(px: float) -> float:
             return float(px / max(px_per_cm or 1e-6, 1e-6))
@@ -334,6 +440,19 @@ class BodyAwareGarmentFitter:
         hip_cm = _to_cm(hip_width)
         waist_cm = _to_cm(waist_width)
 
+        # Hidden-depth estimate and ellipse circumference model
+        depth_factor = 0.72 if looseness <= 1.15 else 0.66
+        chest_depth_cm = chest_cm * depth_factor
+        waist_depth_cm = waist_cm * depth_factor
+
+        def _ellipse_circumference(width_cm: float, depth_cm: float) -> float:
+            a = max(width_cm * 0.5, 0.1)
+            b = max(depth_cm * 0.5, 0.1)
+            return float(np.pi * (3 * (a + b) - np.sqrt((3 * a + b) * (a + 3 * b))))
+
+        chest_circumference_cm = _ellipse_circumference(chest_cm, chest_depth_cm)
+        waist_circumference_cm = _ellipse_circumference(waist_cm, waist_depth_cm)
+
         metric_confidence = {
             'shoulder': shoulder_conf,
             'chest': chest_conf,
@@ -342,6 +461,12 @@ class BodyAwareGarmentFitter:
             'waist': waist_conf,
             'frontality': frontality_score,
         }
+
+        pose_alignment_ok = abs(yaw_deg) <= self._MAX_YAW_DEG
+        if not pose_alignment_ok:
+            # Reduce confidence when side rotation is too high
+            for k in ('shoulder', 'chest', 'waist', 'hip'):
+                metric_confidence[k] *= 0.65
 
         # Import size recommendation system
         try:
@@ -366,7 +491,13 @@ class BodyAwareGarmentFitter:
                 'torso_length_cm': torso_length_cm,
                 'hip_cm': hip_cm,
                 'waist_cm': waist_cm,
-                'cm_scale_source': 'height_calibrated' if self._user_height_cm is not None and est_height_cm is not None else 'shoulder_prior',
+                'chest_circumference_cm': chest_circumference_cm,
+                'waist_circumference_cm': waist_circumference_cm,
+                'depth_factor': depth_factor,
+                'looseness_ratio': float(looseness),
+                'pose_alignment_ok': pose_alignment_ok,
+                'alignment_warning': None if pose_alignment_ok else 'Please face front (yaw > 25 deg)',
+                'cm_scale_source': self._calibration_source,
             }
 
             # Get size recommendation
@@ -376,6 +507,7 @@ class BodyAwareGarmentFitter:
                 'size_recommendation': size_rec['recommended_size'],
                 'size_confidence': size_rec['confidence'],
                 'size_alternatives': size_rec['all_sizes'],
+                'fit_classification': size_rec.get('fit_classification'),
                 'measurements_cm': size_rec['measurements_cm'],
                 'size_description': format_size_recommendation(size_rec)
             })
@@ -409,9 +541,16 @@ class BodyAwareGarmentFitter:
                 'torso_length_cm': torso_length_cm,
                 'hip_cm': hip_cm,
                 'waist_cm': waist_cm,
-                'cm_scale_source': 'height_calibrated' if self._user_height_cm is not None and est_height_cm is not None else 'shoulder_prior',
+                'chest_circumference_cm': chest_circumference_cm,
+                'waist_circumference_cm': waist_circumference_cm,
+                'depth_factor': depth_factor,
+                'looseness_ratio': float(looseness),
+                'pose_alignment_ok': pose_alignment_ok,
+                'alignment_warning': None if pose_alignment_ok else 'Please face front (yaw > 25 deg)',
+                'cm_scale_source': self._calibration_source,
                 'size_recommendation': 'M',  # Default fallback
                 'size_confidence': 0.5,
+                'fit_classification': 'Perfect',
                 'size_description': 'Size estimation unavailable'
             }
         

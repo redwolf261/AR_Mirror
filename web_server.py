@@ -63,6 +63,7 @@ _params: Dict[str, Any] = {
     "depth_skip_n":        5,          # run depth every N frames
     "meas_ttl":            5,          # re-measure every N frames
     "user_height_cm":      170.0,      # explicit scale calibration input
+    "calibration_square_cm": 10.0,     # physical red-square side length
 }
 
 # Param type registry so web UI shows sliders / toggles correctly
@@ -80,6 +81,7 @@ PARAM_META: Dict[str, Dict] = {
     "depth_skip_n":          {"type": "int",   "min": 1,   "max": 60,   "step": 1,    "label": "Depth skip N frames"},
     "meas_ttl":              {"type": "int",   "min": 1,   "max": 30,   "step": 1,    "label": "Measure TTL frames"},
     "user_height_cm":        {"type": "float", "min": 130, "max": 240,  "step": 1,    "label": "User height (cm)"},
+    "calibration_square_cm": {"type": "float", "min": 2,   "max": 50,   "step": 0.5,  "label": "Calibration square (cm)"},
 }
 
 # callbacks registered by tryon_selector to react to param changes
@@ -297,13 +299,6 @@ def push_frame(frame: np.ndarray, quality: int = 70) -> None:
 
 def push_state(fps: float, garment: str, meas: Optional[dict]) -> None:
     """Update the JSON state snapshot."""
-    print(f"[DEBUG] push_state called with:")
-    print(f"  fps: {fps}")
-    print(f"  garment: {garment}")
-    print(f"  meas: {meas}")
-    if meas:
-        print(f"  meas keys: {list(meas.keys())}")
-
     state: Dict[str, Any] = {
         "fps":     round(fps, 1),
         "garment": garment or "",
@@ -314,91 +309,32 @@ def push_state(fps: float, garment: str, meas: Optional[dict]) -> None:
             if isinstance(v, (int, float)):  return round(float(v), 2)
             return None
 
-        # Convert pixel measurements to approximate cm
-        # At typical webcam distance (~1.5m), shoulder width of ~45cm appears as ~300px
-        # So conversion: cm = pixels * 0.15
-        px_to_cm = 0.15  # Approximate conversion factor
-
         shoulder_px = meas.get("shoulder_width", 0) or 0
         torso_px = meas.get("torso_height", 0) or 0
 
-        # Debug: log raw values periodically
-        if shoulder_px > 10:
-            log.info(f"[BODY] shoulder_px={shoulder_px:.1f}, torso_px={torso_px:.1f}")
-
-        # Calculate size recommendation using WORKING body measurements
-        size_rec_data = {}
-        if shoulder_px > 0 and torso_px > 0:
-            print(f"[SIZE DEBUG] Calculating with WORKING measurements: shoulder_px={shoulder_px:.1f}, torso_px={torso_px:.1f}")
-            try:
-                from src.core.size_recommendation import get_size_recommendation, format_size_recommendation
-                test_measurements = {
-                    'shoulder_width': shoulder_px,
-                    'torso_height': torso_px,
-                    'confidence': 0.9
-                }
-                print(f"[SIZE DEBUG] Input: {test_measurements}")
-                size_rec = get_size_recommendation(test_measurements)
-                print(f"[SIZE DEBUG] SUCCESS! Size: {size_rec['recommended_size']} (confidence: {size_rec['confidence']:.2f})")
-
-                size_rec_data = {
-                    'size_recommendation': size_rec['recommended_size'],
-                    'size_confidence': size_rec['confidence'],
-                    'size_description': format_size_recommendation(size_rec),
-                    'size_alternatives': size_rec['all_sizes'],
-                    'precise_shoulder_cm': size_rec['measurements_cm']['shoulder_width'],
-                    'precise_chest_cm': size_rec['measurements_cm']['chest_width'],
-                    'precise_torso_cm': size_rec['measurements_cm']['torso_length']
-                }
-                print(f"[SIZE DEBUG] Created size data successfully!")
-            except Exception as e:
-                print(f"[SIZE DEBUG] Size calculation FAILED: {e}")
-                import traceback
-                traceback.print_exc()
-        else:
-            print(f"[SIZE DEBUG] NO measurements: shoulder_px={shoulder_px}, torso_px={torso_px}")
-
         state["measurements"] = {
-            "shoulder_cm": _s(shoulder_px * px_to_cm) if shoulder_px > 0 else None,
-            "chest_cm":    _s(shoulder_px * 0.9 * px_to_cm) if shoulder_px > 0 else None,
-            "waist_cm":    _s(shoulder_px * 0.75 * px_to_cm) if shoulder_px > 0 else None,
-            "torso_cm":    _s(torso_px * px_to_cm) if torso_px > 0 else None,
+            "shoulder_cm": _s(meas.get("shoulder_width_cm")),
+            "chest_cm":    _s(meas.get("chest_circumference_cm") or meas.get("chest_cm")),
+            "waist_cm":    _s(meas.get("waist_circumference_cm") or meas.get("waist_cm")),
+            "torso_cm":    _s(meas.get("torso_length_cm")),
             "size":        meas.get("size"),
-            # WORKING SIZE RECOMMENDATIONS - Added directly here!
-            "size_recommendation": None,
-            "size_confidence": None,
-            "size_description": "",
-            "size_alternatives": {},
-            "precise_shoulder_cm": None,
-            "precise_chest_cm": None,
-            "precise_torso_cm": None,
+            "size_recommendation": meas.get("size_recommendation"),
+            "size_confidence": _s((meas.get("size_confidence") or 0.0) * 100.0) if meas.get("size_confidence") is not None else None,
+            "size_description": meas.get("size_description", ""),
+            "size_alternatives": meas.get("size_alternatives", {}),
+            "fit_classification": meas.get("fit_classification"),
+            "precise_shoulder_cm": _s(meas.get("shoulder_width_cm")),
+            "precise_chest_cm": _s(meas.get("chest_circumference_cm") or meas.get("chest_cm")),
+            "precise_torso_cm": _s(meas.get("torso_length_cm")),
+            "pose_alignment_ok": bool(meas.get("pose_alignment_ok", True)),
+            "alignment_warning": meas.get("alignment_warning"),
+            "cm_scale_source": meas.get("cm_scale_source"),
+            "measurement_confidence": meas.get("measurement_confidence", {}),
+            "looseness_ratio": _s(meas.get("looseness_ratio")),
+            "yaw_deg": _s(meas.get("yaw_deg")),
+            "shoulder_px": _s(shoulder_px),
+            "torso_px": _s(torso_px),
         }
-
-        # Calculate size recommendation using the WORKING measurements (add after measurements dict)
-        if shoulder_px > 0 and torso_px > 0:
-            try:
-                from src.core.size_recommendation import get_size_recommendation, format_size_recommendation
-                test_measurements = {
-                    'shoulder_width': shoulder_px,
-                    'torso_height': torso_px,
-                    'confidence': 0.9
-                }
-                size_rec = get_size_recommendation(test_measurements)
-
-                # Update the measurements dict with size data
-                state["measurements"]["size_recommendation"] = size_rec['recommended_size']
-                state["measurements"]["size_confidence"] = round(size_rec['confidence'] * 100, 1)
-                state["measurements"]["size_description"] = format_size_recommendation(size_rec)
-                state["measurements"]["size_alternatives"] = size_rec['all_sizes']
-                state["measurements"]["precise_shoulder_cm"] = round(size_rec['measurements_cm']['shoulder_width'], 1)
-                state["measurements"]["precise_chest_cm"] = round(size_rec['measurements_cm']['chest_width'], 1)
-                state["measurements"]["precise_torso_cm"] = round(size_rec['measurements_cm']['torso_length'], 1)
-
-                print(f"[SIZE SUCCESS] Recommended size: {size_rec['recommended_size']} (confidence: {size_rec['confidence']:.2f})")
-            except Exception as e:
-                print(f"[SIZE ERROR] Size calculation failed: {e}")
-                state["measurements"]["size_recommendation"] = "M"  # Fallback
-                state["measurements"]["size_confidence"] = 50
         tb = meas.get("torso_box")
         if tb:
             state["torso_box"] = list(tb)
