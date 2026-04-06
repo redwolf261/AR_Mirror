@@ -849,16 +849,21 @@ class Phase2NeuralPipeline:
         ], dtype=np.float32)
         
         if self.gpu_renderer is not None:
-            # Set PBR material roughness per garment type (metallic always 0.0 for fabric)
-            _roughness_map = {
+            # Set PBR material roughness/metallic per garment type.
+            _material_map = {
                 'tshirt': 0.85, 'shirt': 0.80, 'blouse': 0.70,
                 'dress': 0.50, 'skirt': 0.55,
                 'pants': 0.82, 'jeans': 0.90, 'shorts': 0.85,
                 'jacket': 0.75, 'coat': 0.72, 'hoodie': 0.88,
                 'sweater': 0.92, 'suit': 0.65,
+                'armor': 0.28,
             }
-            _roughness = _roughness_map.get(garment_type.lower(), 0.78)
-            self.gpu_renderer.set_material(roughness=_roughness, metallic=0.0)
+            _metallic_map = {
+                'armor': 0.90,
+            }
+            _roughness = _material_map.get(garment_type.lower(), 0.78)
+            _metallic = _metallic_map.get(garment_type.lower(), 0.0)
+            self.gpu_renderer.set_material(roughness=_roughness, metallic=_metallic)
 
             # GPU hardware rendering (moderngl)
             rendered = self.gpu_renderer.render_wrapped_mesh(

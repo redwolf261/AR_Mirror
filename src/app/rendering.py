@@ -412,7 +412,42 @@ class GarmentRenderer:
         self._garment_cache[cache_key] = (cloth_rgb, cloth_mask)
         return cloth_rgb, cloth_mask
 
-    def _render_garment_neural(self, frame, cloth_rgb, cloth_mask, body_measurements):
+    def _get_garment_render_profile(self, garment_ref) -> dict:
+        """Return rendering hints for the selected garment."""
+        garment = garment_ref if isinstance(garment_ref, dict) else {}
+        category = str(garment.get("category", "")).strip().lower()
+        name = str(garment.get("name", "")).strip().lower()
+        sku = str(garment.get("sku", "")).strip().lower()
+
+        is_full_body = (
+            category in {"armor", "full_body", "full-body", "bodysuit", "body_suit"}
+            or "armor" in name
+            or "armor" in sku
+        )
+
+        garment_type_map = {
+            "t-shirt": "tshirt",
+            "shirt": "shirt",
+            "blouse": "blouse",
+            "dress": "dress",
+            "pants": "pants",
+            "jeans": "pants",
+            "shorts": "pants",
+            "jacket": "jacket",
+            "coat": "jacket",
+            "hoodie": "jacket",
+            "sweater": "jacket",
+            "armor": "armor",
+        }
+
+        return {
+            "category": category,
+            "garment_type": garment_type_map.get(category, "tshirt"),
+            "use_full_body": is_full_body,
+            "use_smpl": is_full_body,
+        }
+
+    def _render_garment_neural(self, frame, cloth_rgb, cloth_mask, body_measurements, garment_ref=None):
         """Render garment using Phase 2 neural warping (GMM + optional TOM).
         
         Converts landmarks, runs neural pipeline, composites with occlusion handling.
@@ -420,6 +455,7 @@ class GarmentRenderer:
         """
         _neural_t = {}
         h, w = frame.shape[:2]
+        render_profile = self._get_garment_render_profile(garment_ref)
         
         try:
             # Convert MediaPipe landmarks to dict format
@@ -467,6 +503,8 @@ class GarmentRenderer:
             result = self.phase2_pipeline.warp_garment(
                 person_rgb, cloth_rgb, cloth_mask_2d, mp_landmarks_dict,
                 body_mask=body_mask_precomputed,
+                use_smpl=render_profile.get('use_smpl', False),
+                garment_type=render_profile.get('garment_type', 'tshirt'),
                 hand_lm_left=body_measurements.get('hand_lm_left'),
                 hand_lm_right=body_measurements.get('hand_lm_right'),
             )
@@ -480,6 +518,12 @@ class GarmentRenderer:
             
             if result.warped_cloth is None:
                 return None
+
+            if render_profile.get('use_full_body') and getattr(result, 'synthesized', None) is not None:
+                full_rgb = result.synthesized
+                if full_rgb.shape[:2] != (h, w):
+                    full_rgb = cv2.resize(full_rgb, (w, h), interpolation=cv2.INTER_LINEAR)
+                return cv2.cvtColor((np.clip(full_rgb, 0.0, 1.0) * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
             
             # Get torso region from body measurements for placement
             torso_x1, torso_y1, torso_x2, torso_y2 = body_measurements['torso_box']
@@ -826,24 +870,26 @@ class GarmentRenderer:
                     if body_measurements:
                         # CatVTON path (best quality, runs offline in background)
                         # Uses cached result when available; triggers rewarp thread otherwise.
-                        _cloth_bgr = (
-                            cv2.cvtColor((cloth_rgb * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
-                            if cloth_rgb is not None
-                            else np.zeros((10, 10, 3), dtype=np.uint8)
-                        )
-                        catvton_result = self._render_garment_catvton(
-                            frame, _cloth_bgr, body_measurements,
-                        )
-                        if catvton_result is not None:
-                            self._stage_times['total_render'].append(
-                                time.perf_counter() - t_render_start)
-                            return catvton_result
+                        garment_profile = self._get_garment_render_profile(garment)
+                        if not garment_profile.get('use_full_body'):
+                            _cloth_bgr = (
+                                cv2.cvtColor((cloth_rgb * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+                                if cloth_rgb is not None
+                                else np.zeros((10, 10, 3), dtype=np.uint8)
+                            )
+                            catvton_result = self._render_garment_catvton(
+                                frame, _cloth_bgr, body_measurements,
+                            )
+                            if catvton_result is not None:
+                                self._stage_times['total_render'].append(
+                                    time.perf_counter() - t_render_start)
+                                return catvton_result
 
                         # Phase 2: Neural warping with GMM + TOM
                         if self.phase == 2 and self.phase2_pipeline:
                             t_neural = time.perf_counter()
                             result = self._render_garment_neural(
-                                frame, cloth_rgb, cloth_mask, body_measurements
+                                frame, cloth_rgb, cloth_mask, body_measurements, garment_ref=garment
                             )
                             self._stage_times['neural_warp'].append(time.perf_counter() - t_neural)
                             if result is not None:

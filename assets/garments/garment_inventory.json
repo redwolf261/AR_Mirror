@@ -628,5 +628,141 @@
       }
     },
     "image_path": "garment_assets/GLB-002"
+  },
+  {
+    "sku": "ARMOR-001",
+    "name": "Winter Warrior Armor",
+    "category": "armor",
+    "image_path": "garment_assets/ARMOR-TEST",
+    "default_size": "M",
+    "sizes": {
+      "XS": {
+        "shoulder_cm": 36,
+        "chest_cm": 80,
+        "length_cm": 60
+      },
+      "S": {
+        "shoulder_cm": 40,
+        "chest_cm": 90,
+        "length_cm": 65
+      },
+      "M": {
+        "shoulder_cm": 44,
+        "chest_cm": 100,
+        "length_cm": 70
+      },
+      "L": {
+        "shoulder_cm": 48,
+        "chest_cm": 110,
+        "length_cm": 75
+      },
+      "XL": {
+        "shoulder_cm": 52,
+        "chest_cm": 120,
+        "length_cm": 80
+      }
+    }
+  },
+  {
+    "sku": "ARMOR-HEAVY-001",
+    "name": "Heavy Plate Armor",
+    "category": "armor",
+    "image_path": "garment_assets/ARMOR-HEAVY",
+    "default_size": "M",
+    "sizes": {
+      "XS": {
+        "shoulder_cm": 36,
+        "chest_cm": 80,
+        "length_cm": 60
+      },
+      "S": {
+        "shoulder_cm": 40,
+        "chest_cm": 90,
+        "length_cm": 65
+      },
+      "M": {
+        "shoulder_cm": 44,
+        "chest_cm": 100,
+        "length_cm": 70
+      },
+      "L": {
+        "shoulder_cm": 48,
+        "chest_cm": 110,
+        "length_cm": 75
+      },
+      "XL": {
+        "shoulder_cm": 52,
+        "chest_cm": 120,
+        "length_cm": 80
+      }
+    }
+  },
+  {
+    "sku": "ARMOR-LIGHT-001",
+    "name": "Light Vanguard Armor",
+    "category": "armor",
+    "image_path": "garment_assets/ARMOR-LIGHT",
+    "default_size": "M",
+    "sizes": {
+      "XS": {
+        "shoulder_cm": 36,
+        "chest_cm": 80,
+        "length_cm": 60
+      },
+      "S": {
+        "shoulder_cm": 40,
+        "chest_cm": 90,
+        "length_cm": 65
+      },
+      "M": {
+        "shoulder_cm": 44,
+        "chest_cm": 100,
+        "length_cm": 70
+      },
+      "L": {
+        "shoulder_cm": 48,
+        "chest_cm": 110,
+        "length_cm": 75
+      },
+      "XL": {
+        "shoulder_cm": 52,
+        "chest_cm": 120,
+        "length_cm": 80
+      }
+    }
+  },
+  {
+    "sku": "ARMOR-FANTASY-001",
+    "name": "Fantasy Royal Armor",
+    "category": "armor",
+    "image_path": "garment_assets/ARMOR-FANTASY",
+    "default_size": "M",
+    "sizes": {
+      "XS": {
+        "shoulder_cm": 36,
+        "chest_cm": 80,
+        "length_cm": 60
+      },
+      "S": {
+        "shoulder_cm": 40,
+        "chest_cm": 90,
+        "length_cm": 65
+      },
+      "M": {
+        "shoulder_cm": 44,
+        "chest_cm": 100,
+        "length_cm": 70
+      },
+      "L": {
+        "shoulder_cm": 48,
+        "chest_cm": 110,
+        "length_cm": 75
+      },
+      "XL": {
+        "shoulder_cm": 52,
+        "chest_cm": 120,
+        "length_cm": 80
+      }
+    }
   }
 ]

@@ -232,6 +232,10 @@ class MeshGarmentWrapper:
             'jacket':  ['spine', 'spine1', 'spine2', 'leftShoulder', 'rightShoulder',
                         'leftArm', 'rightArm', 'leftForeArm', 'rightForeArm',
                         'neck', 'hips'],
+            'armor':   ['spine', 'spine1', 'spine2', 'leftShoulder', 'rightShoulder',
+                        'leftArm', 'rightArm', 'leftForeArm', 'rightForeArm',
+                        'neck', 'hips', 'leftUpLeg', 'rightUpLeg',
+                        'leftLeg', 'rightLeg', 'leftFoot', 'rightFoot'],
         }
         parts = _garment_parts.get(garment_type, _garment_parts['tshirt'])
 
@@ -241,6 +245,7 @@ class MeshGarmentWrapper:
             'dress':   (1000, 4500),
             'pants':   (3000, 5500),
             'jacket':  (1000, 3000),
+            'armor':   (1000, 6500),
         }
 
         if self._vert_segs:

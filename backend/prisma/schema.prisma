@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -34,7 +34,7 @@ model ARSession {
   userId          String?
   user            User?    @relation(fields: [userId], references: [id])
   
-  deviceInfo      Json     // Device details, OS, screen size
+  deviceInfo      String     // Device details, OS, screen size (JSON as string)
   startedAt       DateTime @default(now())
   endedAt         DateTime?
   durationSeconds Int?
@@ -72,7 +72,7 @@ model Measurement {
   
   // Metadata
   confidence        Float
-  detectedRegions   String[] // Array of detected body regions
+  detectedRegions   String // Array of detected body regions (JSON as string)
   timestamp         DateTime @default(now())
   
   // Relations
@@ -95,7 +95,7 @@ model Product {
   price           Float
   currency        String   @default("INR")
   
-  images          String[] // Array of image URLs
+  images          String // Array of image URLs (JSON as string)
   description     String?
   
   // Garment specifications (for fit matching)
@@ -210,7 +210,7 @@ model ABTest {
   name            String   @unique
   description     String
   
-  variants        String[] // ["control", "treatment_a", "treatment_b"]
+  variants        String // ["control", "treatment_a", "treatment_b"] (JSON as string)
   startDate       DateTime
   endDate         DateTime?
   
@@ -289,7 +289,7 @@ model OrderItem {
 // Analytics aggregations (for dashboard)
 model DailyMetrics {
   id              String   @id @default(uuid())
-  date            DateTime @unique @db.Date
+  date            DateTime @unique
   
   totalSessions   Int      @default(0)
   totalMeasurements Int    @default(0)
