@@ -97,6 +97,46 @@ class GarmentRenderer:
     # CatVTON helpers
     # ----------------------------------------------------------------
 
+    def _get_face_detector(self):
+        """Lazily initialize OpenCV Haar face detector for ROI fallback."""
+        if not hasattr(self, '_face_detector'):
+            try:
+                cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+                detector = cv2.CascadeClassifier(cascade_path)
+                self._face_detector = detector if not detector.empty() else None
+            except Exception:
+                self._face_detector = None
+        return getattr(self, '_face_detector', None)
+
+    def _face_based_overlay_region(self, frame: np.ndarray) -> Optional[tuple[int, int, int, int]]:
+        """Estimate a torso ROI from the largest detected face.
+
+        This is a graceful fallback when pose measurements are unavailable.
+        """
+        detector = self._get_face_detector()
+        if detector is None:
+            return None
+
+        h, w = frame.shape[:2]
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = detector.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=4, minSize=(60, 60))
+        if faces is None or len(faces) == 0:
+            return None
+
+        x, y, fw, fh = max(faces, key=lambda r: r[2] * r[3])
+        cx = x + fw // 2
+        shoulder_top = int(y + fh * 1.20)
+        roi_w = int(fw * 3.4)
+        roi_h = int(fh * 4.8)
+
+        x1 = max(0, cx - roi_w // 2)
+        y1 = max(0, shoulder_top)
+        x2 = min(w, x1 + roi_w)
+        y2 = min(h, y1 + roi_h)
+        if x2 - x1 < 20 or y2 - y1 < 20:
+            return None
+        return x1, y1, x2, y2
+
     def _catvton_prewarper(self):
         """Lazily return (or create) the CatVTON pre-warper singleton."""
         if not CATVTON_AVAILABLE:
@@ -218,6 +258,62 @@ class GarmentRenderer:
                 'visibility': lm.visibility
             }
         return mp_dict
+
+    def _compute_overlay_region(
+        self,
+        frame: np.ndarray,
+        body_measurements: dict,
+        target_width: Optional[int] = None,
+        target_height: Optional[int] = None,
+    ) -> tuple[int, int, int, int]:
+        """Return a torso-aware placement box for garment compositing."""
+        h, w = frame.shape[:2]
+        torso_x1, torso_y1, torso_x2, torso_y2 = body_measurements.get(
+            'torso_box', (int(w * 0.25), int(h * 0.20), int(w * 0.75), int(h * 0.80))
+        )
+        shoulder_width = float(body_measurements.get('shoulder_width') or max(1, torso_x2 - torso_x1))
+        torso_height = float(body_measurements.get('torso_height') or max(1, torso_y2 - torso_y1))
+        landmarks = body_measurements.get('landmarks')
+
+        if landmarks is not None and len(landmarks) > 24:
+            ls = landmarks[11]
+            rs = landmarks[12]
+            lh = landmarks[23]
+            rh = landmarks[24]
+
+            shoulder_mid_x = int(((ls.x + rs.x) * 0.5) * w)
+            shoulder_top_y = int(min(ls.y, rs.y) * h)
+            hip_mid_y = int(((lh.y + rh.y) * 0.5) * h)
+            shoulder_span = max(1, int(abs(rs.x - ls.x) * w))
+            torso_span = max(1, int(max(abs(lh.x - ls.x), abs(rh.x - rs.x)) * w))
+
+            if target_width is None:
+                target_width = max(int(shoulder_width * 1.00), int(max(shoulder_span, torso_span) * 0.94))
+            if target_height is None:
+                body_span = max(1, hip_mid_y - shoulder_top_y)
+                target_height = max(int(torso_height * 1.26), int(body_span * 1.08), int(target_width * 1.18))
+
+            collar_drop = max(8, int(torso_height * 0.08))
+            x1 = shoulder_mid_x - target_width // 2
+            y1 = shoulder_top_y + collar_drop
+        else:
+            torso_center_x = (torso_x1 + torso_x2) // 2
+            raw_w = max(1, torso_x2 - torso_x1)
+            raw_h = max(1, torso_y2 - torso_y1)
+            if target_width is None:
+                target_width = max(int(shoulder_width * 1.00), int(raw_w * 0.92))
+            if target_height is None:
+                target_height = max(int(torso_height * 1.26), int(raw_h * 1.08), int(target_width * 1.18))
+            x1 = torso_center_x - target_width // 2
+            y1 = torso_y1 + max(6, int(raw_h * 0.06))
+
+        target_width = max(2, int(target_width))
+        target_height = max(2, int(target_height))
+        x1 = max(0, min(int(x1), max(0, w - target_width)))
+        y1 = max(0, min(int(y1), max(0, h - target_height)))
+        x2 = min(w, x1 + target_width)
+        y2 = min(h, y1 + target_height)
+        return x1, y1, x2, y2
 
     def _load_garment_image(self, garment_ref):
         """Load real garment assets first, then fallback to VITON template cloth."""
@@ -525,8 +621,7 @@ class GarmentRenderer:
                     full_rgb = cv2.resize(full_rgb, (w, h), interpolation=cv2.INTER_LINEAR)
                 return cv2.cvtColor((np.clip(full_rgb, 0.0, 1.0) * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
             
-            # Get torso region from body measurements for placement
-            torso_x1, torso_y1, torso_x2, torso_y2 = body_measurements['torso_box']
+            # Get a torso-aware placement box from landmarks/measurements.
             body_mask = body_measurements.get('body_mask')
 
             # Phase B: merge MediaPipe body mask with SMPL 24-part segmenter mask.
@@ -542,31 +637,9 @@ class GarmentRenderer:
                                          interpolation=cv2.INTER_LINEAR)
                     body_mask = np.maximum(_bm, _smpl_mask.astype(np.float32))
 
-            # ----------------------------------------------------------------
-            # ROBUST FULL-TORSO PLACEMENT
-            # The torso_box from MediaPipe landmarks (shoulder-to-hip) is the
-            # ground-truth bounding region.  Pad it generously so sleeves and
-            # collar are never clipped.
-            #
-            # WHY NOT USE warped_mask as alpha:
-            #   GMM is trained on white-background VITON full-body portraits.
-            #   For live camera input the grid produces near-zero alpha values,
-            #   making the shirt appear as a tiny patch.  We instead use the
-            #   ORIGINAL cloth_mask (correct garment silhouette) clipped by
-            #   the body silhouette from MediaPipe.
-            # ----------------------------------------------------------------
-            raw_w     = max(1, torso_x2 - torso_x1)   # shoulder span (px)
-            raw_h     = max(1, torso_y2 - torso_y1)   # shoulder-to-hip span (px)
-            pad_x     = max(16, int(raw_w * 0.18))    # 18 % side extension
-            pad_y_top = max(8,  int(raw_h * 0.08))    # collar clearance above shoulder
-            pad_y_bot = max(4,  int(raw_h * 0.04))    # hem clearance below hip
-            garment_x1 = max(0, torso_x1 - pad_x)
-            garment_y1 = max(0, torso_y1 - pad_y_top)
-            garment_x2 = min(w, torso_x2 + pad_x)
-            garment_y2 = min(h, torso_y2 + pad_y_bot)
-
-            actual_width  = garment_x2 - garment_x1
-            actual_height = garment_y2 - garment_y1
+            torso_x1, torso_y1, torso_x2, torso_y2 = self._compute_overlay_region(frame, body_measurements)
+            actual_width  = torso_x2 - torso_x1
+            actual_height = torso_y2 - torso_y1
             if actual_width < 10 or actual_height < 10:
                 return None
 
@@ -574,7 +647,7 @@ class GarmentRenderer:
             _tps_frame_space = (result.warped_cloth.shape[:2] == (h, w))
             if _tps_frame_space:
                 warped_cloth_final = result.warped_cloth[
-                    garment_y1:garment_y2, garment_x1:garment_x2
+                    torso_y1:torso_y2, torso_x1:torso_x2
                 ].copy()
             else:
                 warped_cloth_final = cv2.resize(
@@ -588,7 +661,7 @@ class GarmentRenderer:
             # GMM: fall back to original cloth mask resized to ROI
             wm = getattr(result, 'warped_mask', None)
             if _tps_frame_space and wm is not None and wm.shape[:2] == (h, w):
-                garment_alpha = wm[garment_y1:garment_y2, garment_x1:garment_x2].copy()
+                garment_alpha = wm[torso_y1:torso_y2, torso_x1:torso_x2].copy()
                 garment_alpha = garment_alpha.astype(np.float32)
             else:
                 orig_mask = cloth_mask.squeeze() if cloth_mask.ndim == 3 else cloth_mask
@@ -621,7 +694,7 @@ class GarmentRenderer:
                 if bm.shape[:2] != (h, w):
                     bm = cv2.resize(bm.astype(np.float32), (w, h),
                                     interpolation=cv2.INTER_NEAREST)
-                bm_roi = bm[garment_y1:garment_y2, garment_x1:garment_x2].astype(np.float32)
+                bm_roi = bm[torso_y1:torso_y2, torso_x1:torso_x2].astype(np.float32)
                 # Dilate to recover shoulder-side pixels MediaPipe may undercount
                 _dil_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
                 bm_roi = cv2.dilate(bm_roi, _dil_k, iterations=2)
@@ -635,7 +708,7 @@ class GarmentRenderer:
             warped_mask_3d = np.expand_dims(composite_alpha, axis=-1)
 
             # Extract frame region
-            frame_roi = frame[garment_y1:garment_y2, garment_x1:garment_x2]
+            frame_roi = frame[torso_y1:torso_y2, torso_x1:torso_x2]
             if frame_roi.size == 0:
                 return None
             
@@ -645,13 +718,17 @@ class GarmentRenderer:
             # Add subtle shading effect based on body contours
             if body_mask is not None:
                 # Create depth-like shading from body mask gradients
-                bm_roi = body_mask[garment_y1:garment_y2, garment_x1:garment_x2].astype(np.float32)
+                bm_roi = body_mask[torso_y1:torso_y2, torso_x1:torso_x2].astype(np.float32)
                 if bm_roi.shape == composite_alpha.shape:
                     # Calculate gradients to simulate depth/curvature
                     grad_x = cv2.Sobel(bm_roi, cv2.CV_64F, 1, 0, ksize=3)
                     grad_y = cv2.Sobel(bm_roi, cv2.CV_64F, 0, 1, ksize=3)
                     gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
-                    gradient_magnitude = np.clip(gradient_magnitude / gradient_magnitude.max(), 0, 1)
+                    _grad_max = float(gradient_magnitude.max())
+                    if _grad_max > 1e-6:
+                        gradient_magnitude = np.clip(gradient_magnitude / _grad_max, 0, 1)
+                    else:
+                        gradient_magnitude = np.zeros_like(gradient_magnitude)
 
                     # Create subtle shadow/highlight effect
                     shadow_strength = 0.15  # Adjust for subtlety
@@ -673,14 +750,53 @@ class GarmentRenderer:
             # frame pixels so hands appear in FRONT of the garment.
             _hm = getattr(result, 'hand_mask', None)
             if _hm is not None and _hm.shape[:2] == (h, w):
-                _hm_roi = _hm[garment_y1:garment_y2, garment_x1:garment_x2]
+                _hm_roi = _hm[torso_y1:torso_y2, torso_x1:torso_x2]
                 _hm_f   = np.expand_dims(_hm_roi.astype(np.float32) / 255.0, -1)
                 composite = composite * (1.0 - _hm_f) + frame_roi_rgb * _hm_f
+
+            # Deterministic face-priority occlusion: always keep head/face above garment.
+            face_mask = np.zeros((h, w), dtype=np.uint8)
+            landmarks = body_measurements.get('landmarks')
+            if landmarks is not None and len(landmarks) > 11:
+                nose = landmarks[0]
+                l_ear = landmarks[7]
+                r_ear = landmarks[8]
+                l_shoulder = landmarks[11]
+                r_shoulder = landmarks[12]
+
+                cx = int(nose.x * w)
+                cy = int(nose.y * h)
+                ear_span = int(abs(r_ear.x - l_ear.x) * w)
+                shoulder_span = int(abs(r_shoulder.x - l_shoulder.x) * w)
+                face_w = max(ear_span, int(shoulder_span * 0.42), 28)
+                face_h = max(int(face_w * 1.25), 34)
+                cy = min(cy + int(face_h * 0.05), h - 1)
+
+                cv2.ellipse(
+                    face_mask,
+                    (cx, cy),
+                    (max(14, face_w // 2), max(16, face_h // 2)),
+                    0,
+                    0,
+                    360,
+                    255,
+                    -1,
+                )
+
+                neck_y = int(min(l_shoulder.y, r_shoulder.y) * h)
+                face_mask[neck_y:h, :] = 0
+
+            if np.any(face_mask[torso_y1:torso_y2, torso_x1:torso_x2]):
+                face_roi = face_mask[torso_y1:torso_y2, torso_x1:torso_x2].astype(np.float32) / 255.0
+                face_roi = cv2.GaussianBlur(face_roi, (9, 9), sigmaX=2, sigmaY=2)
+                face_roi = np.clip(face_roi, 0.0, 1.0)
+                face_roi_3d = np.expand_dims(face_roi, axis=-1)
+                composite = composite * (1.0 - face_roi_3d) + frame_roi_rgb * face_roi_3d
 
             composite_bgr = cv2.cvtColor((composite * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
             
             output = frame.copy()
-            output[garment_y1:garment_y2, garment_x1:garment_x2] = composite_bgr
+            output[torso_y1:torso_y2, torso_x1:torso_x2] = composite_bgr
 
             # ----------------------------------------------------------------
             # LAB COLOR GRADING
@@ -690,7 +806,7 @@ class GarmentRenderer:
             # LAB space, then apply a linear transfer to the garment pixels.
             # ----------------------------------------------------------------
             try:
-                roi = output[garment_y1:garment_y2, garment_x1:garment_x2]
+                roi = output[torso_y1:torso_y2, torso_x1:torso_x2]
                 roi_lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
                 # Background = inverse of the composite_alpha mask
                 bg_mask = (composite_alpha < 0.15).astype(np.float32)
@@ -720,7 +836,7 @@ class GarmentRenderer:
                     # Update both the output region AND composite_bgr so temporal
                     # smoothing operates on the graded frames
                     composite_bgr = roi_graded
-                    output[garment_y1:garment_y2, garment_x1:garment_x2] = roi_graded
+                    output[torso_y1:torso_y2, torso_x1:torso_x2] = roi_graded
             except Exception:
                 pass  # Non-fatal — keep ungraded composite
 
@@ -731,7 +847,7 @@ class GarmentRenderer:
             # ----------------------------------------------------------------
             _prev = getattr(self, '_prev_garment_composite', None)
             _prev_roi_key = getattr(self, '_prev_garment_roi', None)
-            _curr_roi_key = (garment_y1, garment_y2, garment_x1, garment_x2)
+            _curr_roi_key = (torso_y1, torso_y2, torso_x1, torso_x2)
             if (_prev is not None and _prev_roi_key == _curr_roi_key
                     and _prev.shape == composite_bgr.shape):
                 # ── AdaptiveEMA temporal compositing (Phase D) ───────────────
@@ -746,7 +862,7 @@ class GarmentRenderer:
                 smoothed = cv2.addWeighted(
                     composite_bgr, _alpha_new, _prev, 1.0 - _alpha_new, 0
                 )
-                output[garment_y1:garment_y2, garment_x1:garment_x2] = smoothed
+                output[torso_y1:torso_y2, torso_x1:torso_x2] = smoothed
             self._prev_garment_composite = composite_bgr.copy()
             self._prev_garment_roi = _curr_roi_key
 
@@ -762,36 +878,59 @@ class GarmentRenderer:
             traceback.print_exc()
             return None
 
+    def _ensure_blend_buffers(self, frame_shape, roi_w: int, roi_h: int):
+        """Allocate/reuse fixed-shape compose buffers for zero-allocation render hot path."""
+        key = (int(frame_shape[0]), int(frame_shape[1]), int(roi_h), int(roi_w))
+        if getattr(self, '_blend_buffer_key', None) == key:
+            return
+
+        self._blend_buffer_key = key
+        self._blend_cloth_f32 = np.empty((roi_h, roi_w, 3), dtype=np.float32)
+        self._blend_cloth_u8 = np.empty((roi_h, roi_w, 3), dtype=np.uint8)
+        self._blend_cloth_bgr_u8 = np.empty((roi_h, roi_w, 3), dtype=np.uint8)
+        self._blend_mask_f32 = np.empty((roi_h, roi_w), dtype=np.float32)
+        self._blend_mask_u8 = np.empty((roi_h, roi_w), dtype=np.uint8)
+        self._blend_inv_mask_u8 = np.empty((roi_h, roi_w), dtype=np.uint8)
+        self._blend_fg_u8 = np.empty((roi_h, roi_w, 3), dtype=np.uint8)
+        self._blend_bg_u8 = np.empty((roi_h, roi_w, 3), dtype=np.uint8)
+        self._blend_comp_u8 = np.empty((roi_h, roi_w, 3), dtype=np.uint8)
+
     def _blend_garment_image(self, frame, cloth_rgb, cloth_mask):
-        """VITON alpha composite with intelligent region-of-interest optimization."""
+        """VITON composite using preallocated buffers and in-place OpenCV ops."""
         if cloth_rgb is None or cloth_mask is None:
             return self._render_colored_shirt(frame, {})
-        
+
         h, w = frame.shape[:2]
-        
+        roi_x1 = int(w * 0.20)
+        roi_y1 = int(h * 0.17)
+        roi_x2 = int(w * 0.80)
+        roi_y2 = int(h * 0.84)
+        roi_w = max(1, roi_x2 - roi_x1)
+        roi_h = max(1, roi_y2 - roi_y1)
+
         try:
-            roi_x1 = int(w * 0.15)
-            roi_y1 = int(h * 0.1)
-            roi_x2 = int(w * 0.85)
-            roi_y2 = int(h * 0.75)
-            roi_w = roi_x2 - roi_x1
-            roi_h = roi_y2 - roi_y1
-            
-            cloth_resized = cv2.resize(cloth_rgb, (roi_w, roi_h), interpolation=cv2.INTER_LINEAR)
-            mask_resized = cv2.resize(cloth_mask, (roi_w, roi_h), interpolation=cv2.INTER_NEAREST)
-            
-            if mask_resized.ndim == 2:
-                mask_resized = np.expand_dims(mask_resized, axis=-1)
-            
+            self._ensure_blend_buffers((h, w), roi_w, roi_h)
+
+            # Resize into preallocated buffers
+            cv2.resize(cloth_rgb, (roi_w, roi_h), dst=self._blend_cloth_f32, interpolation=cv2.INTER_LINEAR)
+            mask_src = cloth_mask[..., 0] if cloth_mask.ndim == 3 else cloth_mask
+            cv2.resize(mask_src, (roi_w, roi_h), dst=self._blend_mask_f32, interpolation=cv2.INTER_NEAREST)
+
+            # Convert garment to uint8 once per frame without allocating
+            cv2.convertScaleAbs(self._blend_cloth_f32, dst=self._blend_cloth_u8, alpha=255.0)
+            cv2.cvtColor(self._blend_cloth_u8, cv2.COLOR_RGB2BGR, dst=self._blend_cloth_bgr_u8)
+
+            # Convert mask to uint8 [0,255] and compute inverse in-place
+            cv2.convertScaleAbs(self._blend_mask_f32, dst=self._blend_mask_u8, alpha=255.0)
+            cv2.bitwise_not(self._blend_mask_u8, dst=self._blend_inv_mask_u8)
+
             frame_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]
-            frame_roi_rgb = cv2.cvtColor(frame_roi, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-            
-            composite = cloth_resized * mask_resized + frame_roi_rgb * (1 - mask_resized)
-            composite_bgr = cv2.cvtColor((composite * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
-            
-            frame[roi_y1:roi_y2, roi_x1:roi_x2] = composite_bgr
+            cv2.bitwise_and(self._blend_cloth_bgr_u8, self._blend_cloth_bgr_u8, dst=self._blend_fg_u8, mask=self._blend_mask_u8)
+            cv2.bitwise_and(frame_roi, frame_roi, dst=self._blend_bg_u8, mask=self._blend_inv_mask_u8)
+            cv2.add(self._blend_fg_u8, self._blend_bg_u8, dst=self._blend_comp_u8)
+            frame_roi[:, :, :] = self._blend_comp_u8
             return frame
-        
+
         except Exception as e:
             logger.error(f"VITON blending failed: {e}")
             return self._render_colored_shirt(frame, {})
@@ -810,11 +949,137 @@ class GarmentRenderer:
                 self._holistic_tracker = None
         return self._holistic_tracker
 
-    def _render_garment(self, frame, garment):
-        """Render real dataset garment image on the body using VITON loader."""
+    def _render_garment(self, frame, garment, body_measurements=None, alpha_blend=1.0):
+        """Render garment using precomputed body measurements from async workers.
+        
+        Args:
+            alpha_blend: blend factor for pose recovery (0.0-1.0); 1.0 = full opacity
+        """
         t_render_start = time.perf_counter()
+        pre_ms = 0.0
+        warp_ms = 0.0
+        comp_ms = 0.0
+        post_ms = 0.0
+        warp_guard_reused = False
+        fit_post_ms = 0.0
+        fit_roi_area = 0.0
+        fit_roi_ratio = 0.0
+        fit_post_mask_ms = 0.0
+        fit_post_compose_ms = 0.0
+        fit_post_cvt_ms = 0.0
+        fit_post_writeback_ms = 0.0
+
+        def _extract_transform(measurements):
+            if not measurements:
+                return None
+            torso = measurements.get('torso_box')
+            if not torso or len(torso) != 4:
+                return None
+            x1, y1, x2, y2 = torso
+            center = np.array([(x1 + x2) * 0.5, (y1 + y2) * 0.5], dtype=np.float32)
+            bw = max(1.0, float(x2 - x1))
+            bh = max(1.0, float(y2 - y1))
+            scale = float(measurements.get('shoulder_width', bw))
+            angle = float(measurements.get('yaw_deg', 0.0))
+            return {
+                'center': center,
+                'scale': scale,
+                'angle': angle,
+                'bw': bw,
+                'bh': bh,
+            }
+
+        def _cache_warp_output(result_frame, measurements):
+            cache = getattr(self, '_last_good_warp_output', None)
+            if cache is None or cache.shape != result_frame.shape:
+                self._last_good_warp_output = result_frame.copy()
+            else:
+                cache[:, :, :] = result_frame
+            tf = _extract_transform(measurements)
+            if tf is not None:
+                self._last_good_warp_transform = tf
+
+        def _reuse_last_warp_output():
+            prev = getattr(self, '_last_good_warp_output', None)
+            if prev is None:
+                return None
+            prev_tf = getattr(self, '_last_good_warp_transform', None)
+            if prev_tf is not None and hasattr(self, '_prev_warp_transform'):
+                self._prev_warp_transform = {
+                    'center': prev_tf['center'].copy(),
+                    'scale': float(prev_tf['scale']),
+                    'angle': float(prev_tf['angle']),
+                    'bw': float(prev_tf['bw']),
+                    'bh': float(prev_tf['bh']),
+                }
+            return prev.copy()
+
+        def _soft_guard_output(current_result, measurements):
+            prev = _reuse_last_warp_output()
+            if prev is None:
+                _cache_warp_output(current_result, measurements)
+                return current_result, False
+
+            alpha = float(np.clip(getattr(self, '_warp_guard_blend_alpha', 0.30), 0.0, 1.0))
+            blended = cv2.addWeighted(prev, 1.0 - alpha, current_result, alpha, 0)
+
+            cache = getattr(self, '_last_good_warp_output', None)
+            if cache is None or cache.shape != blended.shape:
+                self._last_good_warp_output = blended.copy()
+            else:
+                cache[:, :, :] = blended
+            return blended, True
+
+        def _finalize(result_frame):
+            total_ms = (time.perf_counter() - t_render_start) * 1000.0
+            self._render_stage_diag = {
+                'pre_ms': pre_ms,
+                'warp_ms': warp_ms,
+                'comp_ms': comp_ms,
+                'post_ms': post_ms,
+                'fit_post_ms': fit_post_ms,
+                'fit_roi_area': fit_roi_area,
+                'fit_roi_ratio': fit_roi_ratio,
+                'fit_post_mask_ms': fit_post_mask_ms,
+                'fit_post_compose_ms': fit_post_compose_ms,
+                'fit_post_cvt_ms': fit_post_cvt_ms,
+                'fit_post_writeback_ms': fit_post_writeback_ms,
+                'total_ms': total_ms,
+                'warp_guard_reused': warp_guard_reused,
+            }
+            if total_ms > 100.0:
+                logger.warning(
+                    "[RENDER STAGE SPIKE] total=%.1fms pre=%.1fms warp=%.1fms comp=%.1fms post=%.1fms",
+                    total_ms,
+                    pre_ms,
+                    warp_ms,
+                    comp_ms,
+                    post_ms,
+                )
+            return result_frame
+
+        if getattr(self, '_force_simple_blend', False):
+            t_pre = time.perf_counter()
+            garment_ref = garment if garment is not None else {}
+            cloth_rgb, cloth_mask = self._load_garment_image(garment_ref)
+            pre_ms += (time.perf_counter() - t_pre) * 1000.0
+            if cloth_rgb is not None and cloth_mask is not None:
+                t_comp = time.perf_counter()
+                result = self._blend_garment_image(frame, cloth_rgb, cloth_mask)
+                comp_ms += (time.perf_counter() - t_comp) * 1000.0
+                # Apply pose recovery blending: fade in garment after pose reappears
+                if alpha_blend < 1.0:
+                    t_post = time.perf_counter()
+                    result = cv2.addWeighted(frame, 1.0 - alpha_blend, result, alpha_blend, 0)
+                    post_ms += (time.perf_counter() - t_post) * 1000.0
+                return _finalize(result)
+            t_comp = time.perf_counter()
+            result = self._render_colored_shirt(frame, garment_ref if isinstance(garment_ref, dict) else {})
+            comp_ms += (time.perf_counter() - t_comp) * 1000.0
+            return _finalize(result)
 
         # Feed frame into holistic tracker (non-blocking, daemon thread)
+        t_pre = time.perf_counter()
         _ht = self._get_holistic_tracker()
         if _ht is not None:
             _ht.enqueue(frame)
@@ -841,21 +1106,13 @@ class GarmentRenderer:
             pair_filename = pair.get('garment')
             if pair_filename:
                 cloth_rgb, cloth_mask = self._load_garment_image(pair_filename)
+        pre_ms += (time.perf_counter() - t_pre) * 1000.0
 
         if cloth_rgb is not None and cloth_mask is not None:
             # Body-aware fitting (all phases use body detection)
             if self.body_fitter:
                 try:
-                    self._pose_frame_counter += 1
-                    t_pose = time.perf_counter()
-                    if (self._cached_body_measurements is None or 
-                        self._pose_frame_counter >= self._pose_skip_interval):
-                        body_measurements = self.body_fitter.extract_body_measurements(frame)
-                        self._cached_body_measurements = body_measurements
-                        self._pose_frame_counter = 0
-                    else:
-                        body_measurements = self._cached_body_measurements
-
+                    t_pre2 = time.perf_counter()
                     # Inject holistic hand landmarks into body_measurements
                     # so _render_garment_neural can pass them to TPSPipeline.
                     if body_measurements is not None and _ht is not None:
@@ -864,14 +1121,17 @@ class GarmentRenderer:
                             body_measurements = dict(body_measurements)  # shallow copy
                             body_measurements['hand_lm_left']  = _hr.left_hand_landmarks
                             body_measurements['hand_lm_right'] = _hr.right_hand_landmarks
-                    self._stage_times['pose_detect'].append(time.perf_counter() - t_pose)
                     self._last_body_measurements = body_measurements
+                    pre_ms += (time.perf_counter() - t_pre2) * 1000.0
                     
                     if body_measurements:
+                        t_pre3 = time.perf_counter()
                         # CatVTON path (best quality, runs offline in background)
                         # Uses cached result when available; triggers rewarp thread otherwise.
                         garment_profile = self._get_garment_render_profile(garment)
+                        pre_ms += (time.perf_counter() - t_pre3) * 1000.0
                         if not garment_profile.get('use_full_body'):
+                            t_warp = time.perf_counter()
                             _cloth_bgr = (
                                 cv2.cvtColor((cloth_rgb * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
                                 if cloth_rgb is not None
@@ -880,51 +1140,102 @@ class GarmentRenderer:
                             catvton_result = self._render_garment_catvton(
                                 frame, _cloth_bgr, body_measurements,
                             )
+                            warp_ms += (time.perf_counter() - t_warp) * 1000.0
                             if catvton_result is not None:
                                 self._stage_times['total_render'].append(
                                     time.perf_counter() - t_render_start)
-                                return catvton_result
+                                if alpha_blend < 1.0:
+                                    t_post = time.perf_counter()
+                                    catvton_result = cv2.addWeighted(frame, 1.0 - alpha_blend, catvton_result, alpha_blend, 0)
+                                    post_ms += (time.perf_counter() - t_post) * 1000.0
+                                return _finalize(catvton_result)
 
                         # Phase 2: Neural warping with GMM + TOM
                         if self.phase == 2 and self.phase2_pipeline:
+                            t_warp = time.perf_counter()
                             t_neural = time.perf_counter()
                             result = self._render_garment_neural(
                                 frame, cloth_rgb, cloth_mask, body_measurements, garment_ref=garment
                             )
                             self._stage_times['neural_warp'].append(time.perf_counter() - t_neural)
+                            warp_ms += (time.perf_counter() - t_warp) * 1000.0
                             if result is not None:
                                 self._stage_times['total_render'].append(time.perf_counter() - t_render_start)
                                 if self.show_debug:
+                                    t_post = time.perf_counter()
                                     result = self.body_fitter.draw_debug_overlay(
                                         result, body_measurements,
                                         show_box=True, show_measurements=True, show_skeleton=True
                                     )
-                                return result
+                                    post_ms += (time.perf_counter() - t_post) * 1000.0
+                                if alpha_blend < 1.0:
+                                    t_post = time.perf_counter()
+                                    result = cv2.addWeighted(frame, 1.0 - alpha_blend, result, alpha_blend, 0)
+                                    post_ms += (time.perf_counter() - t_post) * 1000.0
+                                return _finalize(result)
                         
                         # Geometric fitting (Phase 0 or Phase 2 fallback)
+                        t_warp = time.perf_counter()
                         result = self.body_fitter.fit_garment_to_body(
                             frame, cloth_rgb, cloth_mask, body_measurements
                         )
+                        fit_diag = self.body_fitter.get_last_fit_diag() if hasattr(self.body_fitter, 'get_last_fit_diag') else {}
+                        fit_post_ms = float(fit_diag.get('post_ms', 0.0))
+                        fit_roi_area = float(fit_diag.get('roi_area', 0.0))
+                        fit_roi_ratio = float(fit_diag.get('roi_ratio', 0.0))
+                        fit_post_mask_ms = float(fit_diag.get('post_mask_ms', 0.0))
+                        fit_post_compose_ms = float(fit_diag.get('post_compose_ms', 0.0))
+                        fit_post_cvt_ms = float(fit_diag.get('post_cvt_ms', 0.0))
+                        fit_post_writeback_ms = float(fit_diag.get('post_writeback_ms', 0.0))
+                        warp_ms += (time.perf_counter() - t_warp) * 1000.0
+                        budget_ms = float(getattr(self, '_warp_budget_ms', 20.0))
+                        if warp_ms > budget_ms:
+                            result, warp_guard_reused = _soft_guard_output(result, body_measurements)
+                        else:
+                            _cache_warp_output(result, body_measurements)
                         if self.show_debug:
+                            t_post = time.perf_counter()
                             result = self.body_fitter.draw_debug_overlay(
                                 result, body_measurements,
                                 show_box=True, show_measurements=True, show_skeleton=True
                             )
-                        return result
+                            post_ms += (time.perf_counter() - t_post) * 1000.0
+                        if alpha_blend < 1.0:
+                            t_post = time.perf_counter()
+                            result = cv2.addWeighted(frame, 1.0 - alpha_blend, result, alpha_blend, 0)
+                            post_ms += (time.perf_counter() - t_post) * 1000.0
+                        return _finalize(result)
                     else:
+                        t_comp = time.perf_counter()
                         result = self._blend_garment_image(frame, cloth_rgb, cloth_mask)
+                        comp_ms += (time.perf_counter() - t_comp) * 1000.0
                         if self.show_debug:
+                            t_post = time.perf_counter()
                             result = self.body_fitter.draw_debug_overlay(result)
-                        return result
+                            post_ms += (time.perf_counter() - t_post) * 1000.0
+                        if alpha_blend < 1.0:
+                            t_post = time.perf_counter()
+                            result = cv2.addWeighted(frame, 1.0 - alpha_blend, result, alpha_blend, 0)
+                            post_ms += (time.perf_counter() - t_post) * 1000.0
+                        return _finalize(result)
                 except Exception as e:
                     logger.error(f"Body-aware fitting failed: {e}")
-                    return self._blend_garment_image(frame, cloth_rgb, cloth_mask)
+                    t_comp = time.perf_counter()
+                    result = self._blend_garment_image(frame, cloth_rgb, cloth_mask)
+                    comp_ms += (time.perf_counter() - t_comp) * 1000.0
+                    return _finalize(result)
             
             # No body fitter: simple blending
-            return self._blend_garment_image(frame, cloth_rgb, cloth_mask)
+            t_comp = time.perf_counter()
+            result = self._blend_garment_image(frame, cloth_rgb, cloth_mask)
+            comp_ms += (time.perf_counter() - t_comp) * 1000.0
+            return _finalize(result)
         
         # Fallback to colored shirt if dataset image not available
-        return self._render_colored_shirt(frame, garment)
+        t_comp = time.perf_counter()
+        result = self._render_colored_shirt(frame, garment)
+        comp_ms += (time.perf_counter() - t_comp) * 1000.0
+        return _finalize(result)
 
     def _render_colored_shirt(self, frame, garment):
         """Fallback: Render colored shirt overlay."""

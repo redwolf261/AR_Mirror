@@ -8,6 +8,8 @@ import time
 import sys
 import os
 import argparse
+import threading
+import tracemalloc
 from pathlib import Path
 from collections import deque
 from typing import Optional
@@ -88,6 +90,7 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
         self.frame_count = 0
         self.start_time: float = 0.0
         self.cap: Optional[cv2.VideoCapture] = None
+        self.headless = False
         self.current_garment_idx = 0
         self.show_overlay = True
         self.render_tryon_overlay = True
@@ -106,6 +109,7 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
         self.phase2_pipeline = None
         self.gmm_warper = None
         self.body_fitter = None
+        self.segmentation_fitter = None
         self.semantic_parser = None
         
         # Garment image cache
@@ -118,6 +122,59 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
         self._cached_body_measurements: Optional[dict] = None
         self._pose_frame_counter: int = 0
         self._pose_skip_interval: int = 2
+
+        # Lock-free double buffers (pointer swap) for hot-path state sharing
+        self._capture_buffers: list[Optional[np.ndarray]] = [None, None]
+        self._capture_active_idx = 0
+        self._capture_seq = 0
+        self._capture_ts = 0.0
+
+        self._pose_buffers: list[Optional[dict]] = [None, None]
+        self._pose_active_idx = 0
+        self._pose_seq = 0
+        self._pose_ts = 0.0
+        self._pose_velocity_px = np.zeros(2, dtype=np.float32)
+        self._last_pose_center: Optional[np.ndarray] = None
+
+        # Temporal insulation thresholds (fresh/stale/decay)
+        self._pose_fresh_s = 0.030
+        self._pose_stale_s = 0.100
+        self._pose_drop_s = 0.350
+        self._pose_decay_tau_s = 0.120
+        self._max_translation_px = 12.0
+        self._max_scale_delta = 0.06
+        self._max_angle_delta_deg = 5.0
+        self._prev_warp_transform = None
+        self._warp_budget_ms = 20.0
+        self._warp_guard_hits = 0
+        self._warp_guard_blend_alpha = 0.30
+
+        self._seg_mask_buffers: list[Optional[np.ndarray]] = [None, None]
+        self._seg_mask_active_idx = 0
+        self._seg_seq = 0
+        self._seg_ts = 0.0
+
+        # Worker lifecycle
+        self._stop_workers = threading.Event()
+        self._capture_thread = None
+        self._pose_thread = None
+        self._seg_thread = None
+
+        # Diagnostics and watchdog
+        self._diag_capture_loop_ms = 0.0
+        self._diag_pose_loop_ms = 0.0
+        self._diag_pose_extract_ms = 0.0
+        self._diag_seg_loop_ms = 0.0
+        self._diag_render_ms = 0.0
+        self._diag_pose_age_ms = 0.0
+        self._diag_pose_mode = "fresh"
+        self._diag_pose_clamped = False
+        self._diag_warp_guard_reused = False
+        self._last_frame_time_ms = 0.0
+        self._diag_mem_baseline = None
+        self._enable_memory_trace = os.environ.get("AR_TRACE_ALLOC", "0") == "1"
+        self._frame_spike_count = 0
+        self._frame_spikes = deque(maxlen=30)
         
         # Debug/feedback mode
         self.show_debug = False
@@ -182,11 +239,13 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
             print("[3.5/4] Loading Body-Aware Fitter...")
             try:
                 from src.core.body_aware_fitter import BodyAwareGarmentFitter
-                self.body_fitter = BodyAwareGarmentFitter()
-                print("     [OK] Body-aware fitting enabled!")
+                self.body_fitter = BodyAwareGarmentFitter(output_segmentation_masks=False)
+                self.segmentation_fitter = BodyAwareGarmentFitter(output_segmentation_masks=True)
+                print("     [OK] Decoupled body fitters enabled (pose + segmentation)")
             except Exception as e:
                 print(f"     [WARN] Body-aware fitter not available: {e}")
                 self.body_fitter = None
+                self.segmentation_fitter = None
             
             # Start data flywheel session
             if FLYWHEEL_AVAILABLE and self._session_logger:
@@ -208,15 +267,23 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                 self._web_server.register_garment_callback(self._on_web_garment_select)
                 self._web_server.register_param_callback(self._on_web_params_update)
                 self._web_server.start()
-                if self.body_fitter:
+                if self.body_fitter or self.segmentation_fitter:
                     try:
                         init_height = self._web_server.get_param("user_height_cm")
-                        self.body_fitter.set_user_height_cm(float(init_height))
+                        init_height = float(init_height)
+                        if self.body_fitter:
+                            self.body_fitter.set_user_height_cm(init_height)
+                        if self.segmentation_fitter:
+                            self.segmentation_fitter.set_user_height_cm(init_height)
                     except (TypeError, ValueError):
                         pass
                     try:
                         init_square = self._web_server.get_param("calibration_square_cm")
-                        self.body_fitter.set_calibration_square_cm(float(init_square))
+                        init_square = float(init_square)
+                        if self.body_fitter:
+                            self.body_fitter.set_calibration_square_cm(init_square)
+                        if self.segmentation_fitter:
+                            self.segmentation_fitter.set_calibration_square_cm(init_square)
                     except (TypeError, ValueError):
                         pass
                 print("     [OK] Web UI available at http://localhost:5051")
@@ -382,6 +449,294 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
             print(f"     [WARN] Cloth directory not found: {cloth_dir}")
 
         return pairs
+
+    def _get_capture_snapshot(self):
+        idx = self._capture_active_idx
+        frame = self._capture_buffers[idx]
+        return self._capture_seq, frame, self._capture_ts
+
+    def _torso_center(self, measurements: Optional[dict]) -> Optional[np.ndarray]:
+        if not measurements:
+            return None
+        torso = measurements.get('torso_box')
+        if not torso or len(torso) != 4:
+            return None
+        x1, y1, x2, y2 = torso
+        return np.array([(x1 + x2) * 0.5, (y1 + y2) * 0.5], dtype=np.float32)
+
+    def _shift_measurements(self, measurements: dict, shift_xy: np.ndarray, frame_shape) -> dict:
+        h, w = frame_shape[:2]
+        dx = int(round(float(shift_xy[0])))
+        dy = int(round(float(shift_xy[1])))
+        shifted = dict(measurements)
+
+        torso = shifted.get('torso_box')
+        if torso and len(torso) == 4:
+            x1, y1, x2, y2 = torso
+            bw = max(1, x2 - x1)
+            bh = max(1, y2 - y1)
+            nx1 = int(np.clip(x1 + dx, 0, max(0, w - bw)))
+            ny1 = int(np.clip(y1 + dy, 0, max(0, h - bh)))
+            shifted['torso_box'] = (nx1, ny1, nx1 + bw, ny1 + bh)
+
+        return shifted
+
+    def _get_pose_snapshot(self):
+        pose = self._pose_buffers[self._pose_active_idx]
+        if not pose:
+            return None, 0.0
+        seg_mask = self._seg_mask_buffers[self._seg_mask_active_idx]
+        if seg_mask is None:
+            return pose, self._pose_ts
+        merged = dict(pose)
+        merged['body_mask'] = seg_mask
+        return merged, self._pose_ts
+
+    def _get_temporally_stable_measurements(self, frame_shape):
+        pose, pose_ts = self._get_pose_snapshot()
+        if not pose or pose_ts <= 0.0:
+            return None, 0.0, "none"
+
+        now = time.perf_counter()
+        dt = max(0.0, now - pose_ts)
+        velocity = self._pose_velocity_px.copy()
+
+        if dt <= self._pose_fresh_s:
+            return pose, dt, "fresh"
+
+        if dt <= self._pose_stale_s:
+            shift = velocity * dt
+            predicted = self._shift_measurements(pose, shift, frame_shape)
+            return predicted, dt, "extrapolate"
+
+        # Very stale: decay motion and gradually freeze
+        if dt <= self._pose_drop_s:
+            decay = float(np.exp(-(dt - self._pose_stale_s) / max(self._pose_decay_tau_s, 1e-3)))
+            effective_dt = self._pose_stale_s + (dt - self._pose_stale_s) * decay
+            shift = velocity * effective_dt
+            predicted = self._shift_measurements(pose, shift, frame_shape)
+            return predicted, dt, "decay"
+
+        # Too stale: keep last stable pose without additional motion
+        return pose, dt, "freeze"
+
+    def _clamp_pose_deltas(self, measurements: Optional[dict], frame_shape):
+        """Bound translation/scale/angle change per frame before warp stage."""
+        if not measurements:
+            self._diag_pose_clamped = False
+            return measurements
+
+        center = self._torso_center(measurements)
+        torso = measurements.get('torso_box')
+        if center is None or not torso or len(torso) != 4:
+            self._diag_pose_clamped = False
+            return measurements
+
+        x1, y1, x2, y2 = torso
+        bw = max(1.0, float(x2 - x1))
+        bh = max(1.0, float(y2 - y1))
+        current_scale = float(measurements.get('shoulder_width', bw))
+        current_angle = float(measurements.get('yaw_deg', 0.0))
+
+        if self._prev_warp_transform is None:
+            self._prev_warp_transform = {
+                'center': center.copy(),
+                'scale': current_scale,
+                'angle': current_angle,
+                'bw': bw,
+                'bh': bh,
+            }
+            self._diag_pose_clamped = False
+            return measurements
+
+        prev = self._prev_warp_transform
+
+        # Clamp translation magnitude
+        dxy = center - prev['center']
+        dxy_norm = float(np.linalg.norm(dxy))
+        if dxy_norm > self._max_translation_px:
+            dxy = (dxy / max(dxy_norm, 1e-6)) * self._max_translation_px
+        clamped_center = prev['center'] + dxy
+
+        # Clamp multiplicative scale change
+        if prev['scale'] > 1e-6 and current_scale > 1e-6:
+            ratio = current_scale / prev['scale']
+            ratio = float(np.clip(ratio, 1.0 - self._max_scale_delta, 1.0 + self._max_scale_delta))
+            clamped_scale = prev['scale'] * ratio
+        else:
+            clamped_scale = current_scale
+
+        # Clamp angle delta (degrees)
+        angle_delta = current_angle - prev['angle']
+        angle_delta = float(np.clip(angle_delta, -self._max_angle_delta_deg, self._max_angle_delta_deg))
+        clamped_angle = prev['angle'] + angle_delta
+
+        scale_factor = float(clamped_scale / max(current_scale, 1e-6))
+        out = dict(measurements)
+        for key in ('shoulder_width', 'torso_height', 'chest_width', 'waist_width', 'hip_width'):
+            if key in out and out[key] is not None:
+                out[key] = float(max(1.0, float(out[key]) * scale_factor))
+
+        # Keep torso box coherent with clamped center + scale
+        new_bw = max(1, int(round(bw * scale_factor)))
+        new_bh = max(1, int(round(bh * scale_factor)))
+        h, w = frame_shape[:2]
+        nx1 = int(np.clip(round(float(clamped_center[0]) - new_bw * 0.5), 0, max(0, w - new_bw)))
+        ny1 = int(np.clip(round(float(clamped_center[1]) - new_bh * 0.5), 0, max(0, h - new_bh)))
+        out['torso_box'] = (nx1, ny1, nx1 + new_bw, ny1 + new_bh)
+        out['yaw_deg'] = clamped_angle
+
+        self._prev_warp_transform = {
+            'center': clamped_center.copy(),
+            'scale': clamped_scale,
+            'angle': clamped_angle,
+            'bw': float(new_bw),
+            'bh': float(new_bh),
+        }
+        self._diag_pose_clamped = bool(
+            dxy_norm > self._max_translation_px
+            or abs(current_scale - clamped_scale) > 1e-3
+            or abs(current_angle - clamped_angle) > 1e-3
+        )
+        return out
+
+    def _get_latest_body_measurements(self):
+        pose = self._pose_buffers[self._pose_active_idx]
+        if not pose:
+            return None
+        seg_mask = self._seg_mask_buffers[self._seg_mask_active_idx]
+        if seg_mask is None:
+            return pose
+        merged = dict(pose)
+        merged['body_mask'] = seg_mask
+        return merged
+
+    def _capture_worker_loop(self):
+        while not self._stop_workers.is_set():
+            t0 = time.perf_counter()
+            if not self.cap:
+                time.sleep(0.01)
+                continue
+            ret, frame = self.cap.read()
+            if not ret:
+                time.sleep(0.01)
+                continue
+            next_idx = 1 - self._capture_active_idx
+            self._capture_buffers[next_idx] = frame
+            self._capture_seq += 1
+            self._capture_ts = time.perf_counter()
+            self._capture_active_idx = next_idx
+            self._diag_capture_loop_ms = (time.perf_counter() - t0) * 1000.0
+
+    def _pose_worker_loop(self):
+        last_seq = -1
+        while not self._stop_workers.is_set():
+            t0 = time.perf_counter()
+            if not self.body_fitter:
+                time.sleep(0.02)
+                continue
+
+            seq, frame, _ = self._get_capture_snapshot()
+            if frame is None or seq == last_seq:
+                time.sleep(0.003)
+                continue
+
+            t_extract = time.perf_counter()
+            measurements = self.body_fitter.extract_body_measurements(frame)
+            self._diag_pose_extract_ms = (time.perf_counter() - t_extract) * 1000.0
+            if measurements is not None:
+                now = time.perf_counter()
+                center = self._torso_center(measurements)
+                if center is not None and self._last_pose_center is not None and self._pose_ts > 0.0:
+                    dt = max(1e-3, now - self._pose_ts)
+                    vel = (center - self._last_pose_center) / dt
+                    self._pose_velocity_px = (0.7 * self._pose_velocity_px + 0.3 * vel).astype(np.float32)
+                if center is not None:
+                    self._last_pose_center = center
+
+                next_idx = 1 - self._pose_active_idx
+                self._pose_buffers[next_idx] = measurements
+                self._pose_seq = seq
+                self._pose_ts = now
+                self._pose_active_idx = next_idx
+
+            last_seq = seq
+            self._diag_pose_loop_ms = (time.perf_counter() - t0) * 1000.0
+
+    def _seg_worker_loop(self):
+        last_seq = -1
+        while not self._stop_workers.is_set():
+            t0 = time.perf_counter()
+            if not self.segmentation_fitter:
+                time.sleep(0.05)
+                continue
+
+            seq, frame, _ = self._get_capture_snapshot()
+            if frame is None or seq == last_seq:
+                time.sleep(0.02)
+                continue
+
+            measurements = self.segmentation_fitter.extract_body_measurements(frame)
+            seg_mask = measurements.get('body_mask') if measurements else None
+            if seg_mask is not None:
+                next_idx = 1 - self._seg_mask_active_idx
+                self._seg_mask_buffers[next_idx] = seg_mask
+                self._seg_seq = seq
+                self._seg_ts = time.perf_counter()
+                self._seg_mask_active_idx = next_idx
+
+            last_seq = seq
+            self._diag_seg_loop_ms = (time.perf_counter() - t0) * 1000.0
+            time.sleep(0.08)
+
+    def _start_pipeline_workers(self):
+        self._stop_workers.clear()
+        self._capture_thread = threading.Thread(target=self._capture_worker_loop, daemon=True)
+        self._pose_thread = threading.Thread(target=self._pose_worker_loop, daemon=True)
+        self._seg_thread = threading.Thread(target=self._seg_worker_loop, daemon=True)
+        self._capture_thread.start()
+        self._pose_thread.start()
+        self._seg_thread.start()
+
+    def _stop_pipeline_workers(self):
+        self._stop_workers.set()
+        for t in (self._capture_thread, self._pose_thread, self._seg_thread):
+            if t and t.is_alive():
+                t.join(timeout=0.8)
+
+    def _log_frame_spike(self, frame_time_s: float):
+        self._frame_spike_count += 1
+        render_diag = getattr(self, '_render_stage_diag', {}) or {}
+        spike = {
+            'frame_ms': round(frame_time_s * 1000.0, 1),
+            'pose_loop_ms': round(self._diag_pose_loop_ms, 1),
+            'pose_extract_ms': round(self._diag_pose_extract_ms, 1),
+            'seg_loop_ms': round(self._diag_seg_loop_ms, 1),
+            'capture_loop_ms': round(self._diag_capture_loop_ms, 1),
+            'render_ms': round(self._diag_render_ms, 1),
+            'render_pre_ms': round(float(render_diag.get('pre_ms', 0.0)), 1),
+            'render_warp_ms': round(float(render_diag.get('warp_ms', 0.0)), 1),
+            'render_comp_ms': round(float(render_diag.get('comp_ms', 0.0)), 1),
+            'render_post_ms': round(float(render_diag.get('post_ms', 0.0)), 1),
+            'render_fit_post_ms': round(float(render_diag.get('fit_post_ms', 0.0)), 1),
+            'render_fit_roi_area': round(float(render_diag.get('fit_roi_area', 0.0)), 1),
+            'render_fit_roi_ratio': round(float(render_diag.get('fit_roi_ratio', 0.0)), 4),
+            'pose_age_ms': round(self._diag_pose_age_ms, 1),
+            'pose_mode': self._diag_pose_mode,
+            'pose_clamped': self._diag_pose_clamped,
+            'warp_guard': bool(render_diag.get('warp_guard_reused', False)),
+        }
+        if self._enable_memory_trace and self._diag_mem_baseline is not None:
+            try:
+                mem_after = tracemalloc.take_snapshot()
+                diffs = mem_after.compare_to(self._diag_mem_baseline, 'filename')
+                alloc_bytes = sum(s.size_diff for s in diffs if s.size_diff > 0)
+                spike['alloc_kb_since_start'] = round(float(alloc_bytes) / 1024.0, 1)
+            except Exception:
+                pass
+        self._frame_spikes.append(spike)
+        if self._frame_spike_count <= 5:
+            logger.warning(f"[FRAME SPIKE] {spike}")
     
     def run(self):
         """Run the main demo loop"""
@@ -396,56 +751,55 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
         print("Press 'o' to toggle info overlay\n")
         
         demo_end_time = time.time() + (self.demo_duration if not _infinite else 1e18)
-        
+        self._warp_guard_hits = 0
+
+        if self._enable_memory_trace:
+            if not tracemalloc.is_tracing():
+                tracemalloc.start(10)
+            try:
+                self._diag_mem_baseline = tracemalloc.take_snapshot()
+            except Exception:
+                self._diag_mem_baseline = None
+        else:
+            self._diag_mem_baseline = None
+
+        self._start_pipeline_workers()
+        # Warm up render preprocess paths outside the measured hot loop.
+        if self.garments:
+            try:
+                _warm = self.garments[self.current_garment_idx]
+                self._load_garment_image(_warm)
+            except Exception:
+                pass
+        try:
+            self._get_holistic_tracker()
+        except Exception:
+            pass
         try:
             consecutive_failures = 0
             while time.time() < demo_end_time:
                 frame_start = time.time()
 
-                ret, frame = self.cap.read()  # type: ignore
-                if not ret:
+                _seq, source_frame, _ts = self._get_capture_snapshot()
+                if source_frame is None:
                     consecutive_failures += 1
-                    if consecutive_failures == 10:  # First warning
-                        print(f"[WARN] Camera read failures: {consecutive_failures}/30")
-                        print("       This often means another app is using the camera")
-                        print("       Try closing: Edge browser tabs, Teams, Zoom, Skype, Discord")
-                    elif consecutive_failures == 20:  # Second warning
-                        print(f"[WARN] Camera read failures: {consecutive_failures}/30")
-                        print("       Check Windows Privacy Settings > Camera > Allow desktop apps")
-                    if consecutive_failures > 30:  # ~1 second of failures
-                        print(f"[ERROR] Camera read failed {consecutive_failures} times, exiting")
-                        print("        Camera is likely being used by another application")
-                        print("        or blocked by Windows privacy settings")
+                    if consecutive_failures > 60:
+                        print(f"[ERROR] No capture frames for {consecutive_failures} loops, exiting")
                         break
-                    time.sleep(0.033)  # Wait and retry
+                    time.sleep(0.01)
                     continue
-                consecutive_failures = 0  # Reset on success
-                
+                consecutive_failures = 0
+                frame = source_frame.copy()
+
                 try:
                     display_frame = cv2.flip(frame, 1)
                     garment = self.garments[self.current_garment_idx]
 
-                    # Extract body measurements (MISSING CODE - this is why size recommendations don't work!)
-                    print(f"[DEBUG] Frame {self.frame_count}: body_fitter available: {self.body_fitter is not None}")
-                    if self.body_fitter:
-                        try:
-                            print(f"[DEBUG] Calling body_fitter.extract_body_measurements...")
-                            body_measurements = self.body_fitter.extract_body_measurements(frame)
-                            print(f"[DEBUG] Body measurements result: {body_measurements is not None}")
-                            if body_measurements:
-                                self._cached_body_measurements = body_measurements
-                                print(f"[BODY] Extracted measurements: {list(body_measurements.keys())}")
-                                if body_measurements.get('size_recommendation'):
-                                    print(f"[SIZE] Recommended size: {body_measurements['size_recommendation']} "
-                                          f"(confidence: {body_measurements.get('size_confidence', 0):.2f})")
-                            else:
-                                print(f"[DEBUG] No body measurements extracted")
-                        except Exception as e:
-                            print(f"[BODY] Measurement extraction failed: {e}")
-                            import traceback
-                            traceback.print_exc()
-                    else:
-                        print(f"[DEBUG] No body_fitter available")
+                    body_measurements, pose_age_s, pose_mode = self._get_temporally_stable_measurements(frame.shape)
+                    self._diag_pose_age_ms = pose_age_s * 1000.0
+                    self._diag_pose_mode = pose_mode
+                    body_measurements = self._clamp_pose_deltas(body_measurements, frame.shape)
+                    self._cached_body_measurements = body_measurements
 
                     # Apply SKU bias correction to cached body measurements
                     if self._sku_corrector and self._cached_body_measurements:
@@ -459,11 +813,22 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                                 length_cm=raw.get("torso_length_cm", 0),
                             )
                             self._cached_body_measurements = {**raw, **corrected}
+                            body_measurements = self._cached_body_measurements
                         except Exception:
                             pass
 
                     if self.render_tryon_overlay:
-                        display_frame = self._render_garment(display_frame, garment)
+                        if self.body_fitter and hasattr(self.body_fitter, 'set_runtime_frame_time_ms'):
+                            self.body_fitter.set_runtime_frame_time_ms(self._last_frame_time_ms)
+                        if self.segmentation_fitter and hasattr(self.segmentation_fitter, 'set_runtime_frame_time_ms'):
+                            self.segmentation_fitter.set_runtime_frame_time_ms(self._last_frame_time_ms)
+                        t_render = time.perf_counter()
+                        display_frame = self._render_garment(display_frame, garment, body_measurements=body_measurements)
+                        self._diag_render_ms = (time.perf_counter() - t_render) * 1000.0
+                        render_diag = getattr(self, '_render_stage_diag', {}) or {}
+                        self._diag_warp_guard_reused = bool(render_diag.get('warp_guard_reused', False))
+                        if self._diag_warp_guard_reused:
+                            self._warp_guard_hits += 1
                     output_frame = display_frame.copy()
 
                     # Log measurements to flywheel every 30 frames
@@ -504,7 +869,7 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                 # Push frame and state to WebUI
                 if self._web_server:
                     try:
-                        _ws_fps = 1.0 / np.mean(list(self.frame_times)) if self.frame_times else 0.0
+                        _ws_fps = float(1.0 / np.mean(list(self.frame_times))) if self.frame_times else 0.0
                         _ws_gname = self.garments[self.current_garment_idx].get(
                             "file", self.garments[self.current_garment_idx].get("name", "")
                         )
@@ -540,8 +905,11 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                 if not getattr(self, 'headless', False):
                     cv2.imshow("AR MIRROR", display_frame)
 
-                # Record timing
+                # Record timing and watchdog diagnostics
                 frame_time = time.time() - frame_start
+                self._last_frame_time_ms = frame_time * 1000.0
+                if frame_time > 0.100:
+                    self._log_frame_spike(frame_time)
                 self.frame_times.append(frame_time)
                 self.frame_count += 1
 
@@ -588,6 +956,7 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
             pass
         
         finally:
+            self._stop_pipeline_workers()
             self._cleanup()
             self._print_results()
     
@@ -605,14 +974,28 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
         """Apply web-exposed runtime params to rendering controls."""
         if "render_tryon_overlay" in updates:
             self.render_tryon_overlay = bool(updates.get("render_tryon_overlay"))
-        if "user_height_cm" in updates and self.body_fitter:
+        if "user_height_cm" in updates:
             try:
-                self.body_fitter.set_user_height_cm(float(updates.get("user_height_cm")))
+                user_h_raw = updates.get("user_height_cm")
+                if user_h_raw is None:
+                    raise ValueError("missing user_height_cm")
+                user_h = float(user_h_raw)
+                if self.body_fitter:
+                    self.body_fitter.set_user_height_cm(user_h)
+                if self.segmentation_fitter:
+                    self.segmentation_fitter.set_user_height_cm(user_h)
             except (TypeError, ValueError):
                 pass
-        if "calibration_square_cm" in updates and self.body_fitter:
+        if "calibration_square_cm" in updates:
             try:
-                self.body_fitter.set_calibration_square_cm(float(updates.get("calibration_square_cm")))
+                square_raw = updates.get("calibration_square_cm")
+                if square_raw is None:
+                    raise ValueError("missing calibration_square_cm")
+                square_cm = float(square_raw)
+                if self.body_fitter:
+                    self.body_fitter.set_calibration_square_cm(square_cm)
+                if self.segmentation_fitter:
+                    self.segmentation_fitter.set_calibration_square_cm(square_cm)
             except (TypeError, ValueError):
                 pass
 
@@ -631,6 +1014,7 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
             logger.debug(f"Flywheel garment-change error: {_e}")
 
     def _cleanup(self):
+        self._stop_pipeline_workers()
         # Close flywheel session
         if FLYWHEEL_AVAILABLE and self._session_logger and self._current_session_id:
             try:
@@ -675,6 +1059,32 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
             print(f"   GOOD - {avg_fps:.1f} FPS acceptable")
         else:
             print(f"   NEEDS OPTIMIZATION - {avg_fps:.1f} FPS")
+
+        print(f"\nFRAME WATCHDOG:")
+        print(f"   Spikes >100ms: {self._frame_spike_count}")
+        print(f"   Warp guard reuses: {self._warp_guard_hits}")
+        reuse_rate = (100.0 * self._warp_guard_hits / max(1, self.frame_count))
+        print(f"   Warp guard reuse rate: {reuse_rate:.2f}%")
+        if self._frame_spikes:
+            worst = max(self._frame_spikes, key=lambda s: s['frame_ms'])
+            culprit = max(
+                ('pose_loop_ms', 'pose_extract_ms', 'seg_loop_ms', 'capture_loop_ms', 'render_ms'),
+                key=lambda k: worst.get(k, 0.0),
+            )
+            print(f"   Worst spike: {worst['frame_ms']:.1f}ms")
+            print(f"   Worst frame time: {worst['frame_ms']:.1f}ms")
+            print(f"   Likely culprit: {culprit}={worst.get(culprit, 0.0):.1f}ms")
+            print("   Render breakdown:")
+            print(f"      preprocess: {worst.get('render_pre_ms', 0.0):.1f}ms")
+            print(f"      warp      : {worst.get('render_warp_ms', 0.0):.1f}ms")
+            print(f"      compose   : {worst.get('render_comp_ms', 0.0):.1f}ms")
+            print(f"      post      : {worst.get('render_post_ms', 0.0):.1f}ms")
+            print(f"      fit_post  : {worst.get('render_fit_post_ms', 0.0):.1f}ms")
+            print(f"      roi area  : {worst.get('render_fit_roi_area', 0.0):.0f}")
+            print(f"      roi ratio : {worst.get('render_fit_roi_ratio', 0.0):.3f}")
+            print(f"      guard used: {bool(worst.get('warp_guard', False))}")
+            if 'alloc_kb_since_start' in worst:
+                print(f"   Alloc delta since start: {worst['alloc_kb_since_start']:.1f} KB")
         
         # Per-stage timing breakdown
         if any(len(v) > 0 for v in self._stage_times.values()):

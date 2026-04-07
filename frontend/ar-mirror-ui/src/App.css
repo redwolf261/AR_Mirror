@@ -137,6 +137,117 @@ body {
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+.parallel3d-nav {
+  display: flex;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-2xl);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-elevated);
+}
+
+.parallel3d-nav-btn {
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-text-secondary);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.parallel3d-nav-btn.active {
+  color: #fff;
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.parallel3d-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #05070f;
+}
+
+.parallel3d-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-2xl);
+  color: #dce4ff;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.parallel3d-toolbar button {
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #fff;
+  background: transparent;
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.parallel3d-pill {
+  font-size: var(--font-size-sm);
+  color: #92b3ff;
+}
+
+.parallel3d-gate {
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.3px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.parallel3d-gate.pass {
+  color: #9ff8bd;
+  background: rgba(28, 196, 93, 0.18);
+  border-color: rgba(97, 224, 150, 0.45);
+}
+
+.parallel3d-gate.warn {
+  color: #ffe99b;
+  background: rgba(250, 183, 35, 0.16);
+  border-color: rgba(255, 210, 95, 0.42);
+}
+
+.parallel3d-gate.fail {
+  color: #ffb0b0;
+  background: rgba(240, 63, 63, 0.18);
+  border-color: rgba(255, 120, 120, 0.45);
+}
+
+.parallel3d-gate.unknown {
+  color: #b8c6eb;
+  background: rgba(128, 151, 210, 0.13);
+  border-color: rgba(179, 198, 235, 0.28);
+}
+
+.parallel3d-status {
+  font-size: var(--font-size-sm);
+  color: #c5cde4;
+}
+
+.parallel3d-canvas {
+  flex: 1;
+  min-height: 0;
+}
+
+.parallel3d-stage {
+  position: relative;
+  overflow: hidden;
+}
+
+.parallel3d-overlay-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }

@@ -44,6 +44,8 @@ _latest_jpeg: Optional[bytes] = None      # MJPEG frame bytes
 _state_lock  = threading.Lock()
 _state: Dict[str, Any] = {}
 
+_ws_thread: Optional[threading.Thread] = None
+
 _params_lock = threading.Lock()
 _params: Dict[str, Any] = {
     # ── Visual overlay ───────────────────────────────────────────
@@ -107,11 +109,160 @@ _fitengine_session: Dict[str, Any] = {
     "updated_at": time.time(),
 }
 
+_signal_lock = threading.Lock()
+_pose_signal_ema: Dict[str, float] = {
+    "anchor_x": float("nan"),
+    "anchor_y": float("nan"),
+    "scale": float("nan"),
+}
+
+
+def _landmark_map(pose2d: list) -> Dict[int, list]:
+    points: Dict[int, list] = {}
+    for pt in pose2d:
+        if isinstance(pt, list) and len(pt) >= 4 and isinstance(pt[0], int):
+            points[pt[0]] = pt
+    return points
+
+
+def _extract_mask_polygon(mask: Any, max_points: int = 48) -> Optional[list]:
+    """Extract a simplified normalized contour polygon from a binary body mask."""
+    if mask is None:
+        return None
+
+    mask_np = np.asarray(mask)
+    if mask_np.ndim == 3:
+        mask_np = np.squeeze(mask_np)
+    if mask_np.ndim != 2:
+        return None
+
+    h, w = mask_np.shape[:2]
+    if h <= 1 or w <= 1:
+        return None
+
+    if mask_np.dtype != np.uint8:
+        mask_bin = (mask_np > 0.5).astype(np.uint8) * 255
+    else:
+        mask_bin = (mask_np > 0).astype(np.uint8) * 255
+
+    if int(mask_bin.sum()) == 0:
+        return None
+
+    contours, _ = cv2.findContours(mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    contour = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(contour) < 20:
+        return None
+
+    epsilon = 0.005 * cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, epsilon, True)
+    points = approx.reshape(-1, 2)
+
+    if points.shape[0] > max_points:
+        idx = np.linspace(0, points.shape[0] - 1, max_points, dtype=np.int32)
+        points = points[idx]
+
+    poly = []
+    for p in points:
+        x = float(p[0]) / float(max(1, w - 1))
+        y = float(p[1]) / float(max(1, h - 1))
+        poly.append([round(x, 6), round(y, 6)])
+
+    return poly if len(poly) >= 3 else None
+
+
+def _compute_pose_signals(pose2d: list) -> Dict[str, Any]:
+    """Estimate torso anchor and normalized scale; smooth via EMA for stable overlays."""
+    pts = _landmark_map(pose2d)
+    ls = pts.get(11)
+    rs = pts.get(12)
+    lh = pts.get(23)
+    rh = pts.get(24)
+    if not (ls and rs and lh and rh):
+        return {
+            "anchor": None,
+            "scale": None,
+            "pose_confidence": 0.0,
+            "shoulder_width_norm": None,
+            "torso_height_norm": None,
+        }
+
+    lsv, rsv, lhv, rhv = float(ls[3]), float(rs[3]), float(lh[3]), float(rh[3])
+    confidence = max(0.0, min(1.0, (lsv + rsv + lhv + rhv) / 4.0))
+
+    s_cx = (float(ls[1]) + float(rs[1])) * 0.5
+    s_cy = (float(ls[2]) + float(rs[2])) * 0.5
+    h_cx = (float(lh[1]) + float(rh[1])) * 0.5
+    h_cy = (float(lh[2]) + float(rh[2])) * 0.5
+    anchor_x = (s_cx + h_cx) * 0.5
+    anchor_y = (s_cy + h_cy) * 0.5
+
+    shoulder_w = float(np.hypot(float(ls[1]) - float(rs[1]), float(ls[2]) - float(rs[2])))
+    torso_h = float(np.hypot(s_cx - h_cx, s_cy - h_cy))
+    raw_scale = max(0.05, shoulder_w * 2.2)
+
+    alpha = 0.22
+    with _signal_lock:
+        if np.isnan(_pose_signal_ema["anchor_x"]) or np.isnan(_pose_signal_ema["anchor_y"]) or np.isnan(_pose_signal_ema["scale"]):
+            _pose_signal_ema["anchor_x"] = anchor_x
+            _pose_signal_ema["anchor_y"] = anchor_y
+            _pose_signal_ema["scale"] = raw_scale
+        else:
+            anchor_x_prev = _pose_signal_ema["anchor_x"]
+            anchor_y_prev = _pose_signal_ema["anchor_y"]
+            scale_prev = _pose_signal_ema["scale"]
+            _pose_signal_ema["anchor_x"] = anchor_x_prev + (anchor_x - anchor_x_prev) * alpha
+            _pose_signal_ema["anchor_y"] = anchor_y_prev + (anchor_y - anchor_y_prev) * alpha
+            _pose_signal_ema["scale"] = scale_prev + (raw_scale - scale_prev) * alpha
+
+        smoothed_anchor_x = _pose_signal_ema["anchor_x"]
+        smoothed_anchor_y = _pose_signal_ema["anchor_y"]
+        smoothed_scale = _pose_signal_ema["scale"]
+
+    return {
+        "anchor": {"x": round(smoothed_anchor_x, 6), "y": round(smoothed_anchor_y, 6)},
+        "scale": round(smoothed_scale, 6),
+        "pose_confidence": round(confidence, 6),
+        "shoulder_width_norm": round(shoulder_w, 6),
+        "torso_height_norm": round(torso_h, 6),
+    }
+
+
+def _compute_segmentation_payload(pose2d: list, meas: Optional[dict] = None) -> Dict[str, Any]:
+    """Emit real segmentation contour when body mask is available, else fallback polygon."""
+    start = time.perf_counter()
+    pts = _landmark_map(pose2d)
+    ls = pts.get(11)
+    rs = pts.get(12)
+    lh = pts.get(23)
+    rh = pts.get(24)
+
+    polygon = None
+    if ls and rs and lh and rh:
+        polygon = [
+            [round(float(ls[1]), 6), round(float(ls[2]), 6)],
+            [round(float(rs[1]), 6), round(float(rs[2]), 6)],
+            [round(float(rh[1]), 6), round(float(rh[2]), 6)],
+            [round(float(lh[1]), 6), round(float(lh[2]), 6)],
+        ]
+
+    body_mask_poly = None
+    if meas:
+        body_mask_poly = _extract_mask_polygon(meas.get("body_mask"))
+
+    latency_ms = (time.perf_counter() - start) * 1000.0
+    return {
+        "maskAvailable": body_mask_poly is not None,
+        "mode": "body_mask_contour" if body_mask_poly is not None else "placeholder",
+        "latencyMs": round(float(latency_ms), 3),
+        "maskPolygon": body_mask_poly if body_mask_poly is not None else polygon,
+    }
+
 
 def _is_measurement_ready(state: Dict[str, Any]) -> bool:
     meas = state.get("measurements") or {}
-    if not state.get("has_landmarks"):
-        return False
     return all(meas.get(k) is not None for k in ("shoulder_cm", "chest_cm", "torso_cm"))
 
 
@@ -212,12 +363,16 @@ def _side_snapshot_distinct(session: Dict[str, Any]) -> tuple[bool, str, Optiona
     chest_ratio = None
     if front_chest is not None and side_chest is not None:
         chest_ratio = side_chest / max(front_chest, 1e-6)
+        # Ignore clearly implausible chest-ratio outliers from single-frame jitter.
+        if chest_ratio < 0.45 or chest_ratio > 1.45:
+            chest_ratio = None
 
-    # Distinct if side is clearly narrower than front in both dimensions when available.
+    # Distinct if side is narrower than front. Keep this lenient to avoid blocking finalize
+    # when one of the capture frames is noisy but still usable for fusion.
     if chest_ratio is not None:
-        distinct = shoulder_ratio <= 0.85 and chest_ratio <= 0.88
+        distinct = shoulder_ratio <= 0.92 and chest_ratio <= 0.95
     else:
-        distinct = shoulder_ratio <= 0.82
+        distinct = shoulder_ratio <= 0.92
 
     if distinct:
         basis = shoulder_ratio if chest_ratio is None else (shoulder_ratio + chest_ratio) / 2.0
@@ -247,8 +402,8 @@ def _build_fitengine_view(state: Dict[str, Any]) -> Dict[str, Any]:
         "session": session,
         "readiness": {
             "measurement_ready": ready,
-            "can_capture_front": bool(session.get("active") and session.get("step") == "front" and ready),
-            "can_capture_side": bool(session.get("active") and session.get("step") == "side" and ready and side_pose_ok),
+            "can_capture_front": bool(session.get("active") and session.get("step") == "front"),
+            "can_capture_side": bool(session.get("active") and session.get("step") == "side"),
             "can_finalize": bool(session.get("active") and session.get("front_captured") and session.get("side_captured")),
         },
         "warnings": warnings,
@@ -303,11 +458,26 @@ def push_state(fps: float, garment: str, meas: Optional[dict]) -> None:
         "fps":     round(fps, 1),
         "garment": garment or "",
         "ts":      time.time(),
+        "ts_ms":   int(time.time() * 1000),
     }
     if meas:
         def _s(v):
             if isinstance(v, (int, float)):  return round(float(v), 2)
             return None
+
+        pose2d = []
+        pose3d = []
+
+        for idx, lm in enumerate(meas.get("landmarks") or []):
+            try:
+                x = float(getattr(lm, "x", 0.0))
+                y = float(getattr(lm, "y", 0.0))
+                z = float(getattr(lm, "z", 0.0))
+                vis = float(getattr(lm, "visibility", 0.0))
+                pose2d.append([idx, round(x, 6), round(y, 6), round(vis, 6)])
+                pose3d.append([idx, round(x, 6), round(y, 6), round(z, 6), round(vis, 6)])
+            except (TypeError, ValueError):
+                continue
 
         shoulder_px = meas.get("shoulder_width", 0) or 0
         torso_px = meas.get("torso_height", 0) or 0
@@ -341,9 +511,78 @@ def push_state(fps: float, garment: str, meas: Optional[dict]) -> None:
         # Include landmarks for skeleton drawing
         if meas.get("landmarks"):
             state["has_landmarks"] = True
+        state["pose2D"] = pose2d
+        state["pose3D"] = pose3d
+
+        signals = _compute_pose_signals(pose2d)
+        state.update(signals)
+        state["segmentation"] = _compute_segmentation_payload(pose2d, meas)
+    else:
+        state["pose2D"] = []
+        state["pose3D"] = []
+        state["anchor"] = None
+        state["scale"] = None
+        state["pose_confidence"] = 0.0
+        state["shoulder_width_norm"] = None
+        state["torso_height_norm"] = None
+        state["segmentation"] = {
+            "maskAvailable": False,
+            "mode": "placeholder",
+            "latencyMs": 0.0,
+            "maskPolygon": None,
+        }
     with _state_lock:
         _state.clear()
         _state.update(state)
+
+
+def _pose_packet() -> Dict[str, Any]:
+    with _state_lock:
+        snap = dict(_state)
+    return {
+        "pose2D": snap.get("pose2D") or [],
+        "pose3D": snap.get("pose3D") or [],
+        "timestamp": snap.get("ts_ms") or int(time.time() * 1000),
+        "anchor": snap.get("anchor"),
+        "scale": snap.get("scale"),
+        "poseConfidence": snap.get("pose_confidence"),
+        "shoulderWidthNorm": snap.get("shoulder_width_norm"),
+        "torsoHeightNorm": snap.get("torso_height_norm"),
+        "segmentation": snap.get("segmentation") or {"maskAvailable": False, "mode": "placeholder", "latencyMs": 0.0, "maskPolygon": None},
+        "garment": snap.get("garment") or "",
+    }
+
+
+def _start_pose_ws_server(host: str = "0.0.0.0", port: int = 8765, rate_hz: int = 15) -> Optional[threading.Thread]:
+    """Start async websocket server that streams the latest pose packet."""
+
+    def _run() -> None:
+        try:
+            import asyncio
+            import websockets
+        except Exception as exc:
+            log.warning(f"[PoseWS] websockets unavailable: {exc}")
+            return
+
+        async def _handler(websocket):
+            interval = max(0.001, 1.0 / float(max(1, rate_hz)))
+            while True:
+                await websocket.send(json.dumps(_pose_packet()))
+                await asyncio.sleep(interval)
+
+        async def _main() -> None:
+            async with websockets.serve(_handler, host, port, max_queue=2, ping_interval=20, ping_timeout=20):
+                log.info(f"[PoseWS] started -> ws://localhost:{port}")
+                await asyncio.Future()
+
+        try:
+            asyncio.run(_main())
+        except Exception as exc:
+            log.warning(f"[PoseWS] stopped: {exc}")
+
+    thread = threading.Thread(target=_run, daemon=True, name="PoseWebSocketServer")
+    thread.start()
+    return thread
 
 
 def patch_state(updates: Dict[str, Any]) -> None:
@@ -392,21 +631,20 @@ def _reset_fitengine_session() -> Dict[str, Any]:
 
 
 def _capture_fitengine_step(step: str, state: Dict[str, Any]) -> tuple[bool, Dict[str, Any], Optional[str]]:
-    ready = _is_measurement_ready(state)
     with _fitengine_lock:
         if not _fitengine_session.get("active"):
             return False, dict(_fitengine_session), "No active FitEngine session"
         if _fitengine_session.get("step") != step:
             return False, dict(_fitengine_session), f"Current step is '{_fitengine_session.get('step')}'"
-        if not ready:
-            return False, dict(_fitengine_session), "Measurement signal is not stable yet"
 
         if step == "side":
             side_ok, side_hint = _side_pose_ready(state, _fitengine_session)
             if not side_ok:
-                return False, dict(_fitengine_session), side_hint
+                _fitengine_session.setdefault("warnings", []).append(side_hint)
 
         snap = _measurement_snapshot(state)
+        if not _is_measurement_ready(state):
+            _fitengine_session.setdefault("warnings", []).append("Capture saved before measurements were fully ready; hold still and recapture if needed.")
         if step == "front":
             _fitengine_session["front_captured"] = True
             _fitengine_session["front_snapshot"] = snap
@@ -437,7 +675,10 @@ def _finalize_fitengine_session(state: Dict[str, Any]) -> tuple[bool, Dict[str, 
 
         side_distinct_ok, side_distinct_msg, side_distinct_score = _side_snapshot_distinct(_fitengine_session)
         if not side_distinct_ok:
-            return False, dict(_fitengine_session), side_distinct_msg
+            # Do not hard-fail finalize on this heuristic; keep it as a warning and
+            # confidence penalty so users still get a size recommendation.
+            _fitengine_session.setdefault("warnings", []).append(side_distinct_msg)
+            side_distinct_score = 0.0
 
         meas = state.get("measurements") or {}
         truth = _fitengine_session.get("truth_metrics") or {}
@@ -621,6 +862,26 @@ def _make_flask_app():
         CORS(app)  # Allow all origins in development
     else:
         CORS(app, origins=allowed_origins)  # Restrict origins in production
+
+    @app.route("/")
+    def index():
+        return jsonify({
+            "ok": True,
+            "service": "AR Mirror Web Server",
+            "message": "Use /stream for MJPEG and /api/* for JSON endpoints.",
+            "endpoints": {
+                "stream": "/stream",
+                "state": "/api/state",
+                "params_get": "/api/params",
+                "garments": "/api/garments",
+                "snapshot": "/api/snapshot",
+                "health": "/healthz",
+            },
+        })
+
+    @app.route("/healthz")
+    def healthz():
+        return jsonify({"ok": True})
 
     # ── MJPEG stream ──────────────────────────────────────────────
     def _gen_frames():
@@ -843,6 +1104,7 @@ class WebServer:
 
     # ── Lifecycle ─────────────────────────────────────────────────
     def start(self):
+        global _ws_thread
         app = _make_flask_app()
         if app is None:
             return False
@@ -855,5 +1117,10 @@ class WebServer:
 
         self._thread = threading.Thread(target=_run, daemon=True, name="WebServer")
         self._thread.start()
+
+        if _ws_thread is None or not _ws_thread.is_alive():
+            ws_port = int(os.environ.get("AR_MIRROR_POSE_WS_PORT", "8765"))
+            _ws_thread = _start_pose_ws_server(host=self.host, port=ws_port, rate_hz=15)
+
         log.info(f"[WebServer] started → http://localhost:{self.port}  |  stream: /stream")
         return True

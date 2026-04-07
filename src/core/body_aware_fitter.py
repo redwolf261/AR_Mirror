@@ -50,13 +50,14 @@ class BodyAwareGarmentFitter:
     # If estimated focal length deviates by more than this fraction, run EMA
     _FOCAL_RECAL_THRESHOLD: float = 0.15
     # Observation-layer quality gates
-    _CRITICAL_VISIBILITY: float = 0.60
+    _CRITICAL_VISIBILITY: float = 0.35
     _MIN_BRIGHTNESS: float = 28.0
     _MAX_YAW_DEG: float = 25.0
 
-    def __init__(self, model_path: str = 'pose_landmarker_lite.task'):
+    def __init__(self, model_path: str = 'pose_landmarker_lite.task', output_segmentation_masks: bool = True):
         """Initialize MediaPipe pose detector"""
         self.model_path = model_path
+        self.output_segmentation_masks = bool(output_segmentation_masks)
         self.detector = None
         self._start_time_ns = time.monotonic_ns()  # Real-time base for timestamps
         
@@ -103,6 +104,42 @@ class BodyAwareGarmentFitter:
             'hip_width': 100.0,
             'waist_width': 90.0,
         }
+
+        # Feature-flagged non-rigid warp path (enabled by default).
+        env_nonrigid = os.getenv('USE_NONRIGID_WARP', '0').strip().lower()
+        self.use_nonrigid_warp = env_nonrigid not in {'0', 'false', 'off', 'no'}
+        self._nonrigid_update_interval = max(1, int(os.getenv('NONRIGID_WARP_UPDATE_INTERVAL', '2')))
+        self._nonrigid_backoff_interval = max(1, int(os.getenv('NONRIGID_WARP_BACKOFF_INTERVAL', '3')))
+        self._nonrigid_budget_ms = float(os.getenv('NONRIGID_FRAME_BUDGET_MS', '33.0'))
+        self._nonrigid_margin_ms = float(os.getenv('NONRIGID_FRAME_MARGIN_MS', '5.0'))
+        self._runtime_last_frame_ms = 0.0
+        self._runtime_frame_ema_ms = 0.0
+        self._runtime_frame_ema_alpha = float(np.clip(float(os.getenv('NONRIGID_FRAME_EMA_ALPHA', '0.2')), 0.01, 1.0))
+        self._nonrigid_frame_counter = 0
+        self._nonrigid_frames_since_refresh = 0
+        self._cached_nonrigid_rgb: Optional[np.ndarray] = None
+        self._cached_nonrigid_mask: Optional[np.ndarray] = None
+        self._nonrigid_refresh_blend_alpha = 0.35
+        self._nonrigid_blend_px = 14
+        self._nonrigid_warp_scale = float(np.clip(float(os.getenv('NONRIGID_WARP_SCALE', '0.5')), 0.25, 1.0))
+        env_nr_profile = os.getenv('NONRIGID_WARP_PROFILE', '0').strip().lower()
+        self._nonrigid_profile_enabled = env_nr_profile not in {'0', 'false', 'off', 'no'}
+        self._nonrigid_profile_every = max(1, int(os.getenv('NONRIGID_WARP_PROFILE_EVERY', '20')))
+        self._nonrigid_profile_counter = 0
+        self._nonrigid_post_profile_every = max(1, int(os.getenv('NONRIGID_POST_PROFILE_EVERY', '20')))
+        self._nonrigid_post_profile_counter = 0
+        self._nonrigid_min_scale = 0.65
+        self._nonrigid_max_scale = 1.35
+        self._blend_weight_cache: Dict[Tuple[int, int], Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+        self._last_fit_diag: Dict[str, float] = {
+            'roi_area': 0.0,
+            'roi_ratio': 0.0,
+            'post_ms': 0.0,
+            'post_mask_ms': 0.0,
+            'post_compose_ms': 0.0,
+            'post_cvt_ms': 0.0,
+            'post_writeback_ms': 0.0,
+        }
         
         # Download model if needed
         if not os.path.exists(model_path):
@@ -116,8 +153,8 @@ class BodyAwareGarmentFitter:
         base_options = python.BaseOptions(model_asset_path=model_path)
         options = vision.PoseLandmarkerOptions(
             base_options=base_options,
-            output_segmentation_masks=True,
-            running_mode=vision.RunningMode.VIDEO)
+            output_segmentation_masks=self.output_segmentation_masks,
+            running_mode=vision.RunningMode.IMAGE)
         self.detector = vision.PoseLandmarker.create_from_options(options)
         
         print("[OK] Body-aware fitter initialized")
@@ -131,6 +168,22 @@ class BodyAwareGarmentFitter:
             h = float(height_cm)
             if 130.0 <= h <= 240.0:
                 self._user_height_cm = h
+        except (TypeError, ValueError):
+            return
+
+    def set_runtime_frame_time_ms(self, frame_time_ms: Optional[float]) -> None:
+        """Provide last frame time to adaptive non-rigid scheduler."""
+        if frame_time_ms is None:
+            return
+        try:
+            v = float(frame_time_ms)
+            if np.isfinite(v) and v >= 0.0:
+                self._runtime_last_frame_ms = v
+                if self._runtime_frame_ema_ms <= 0.0:
+                    self._runtime_frame_ema_ms = v
+                else:
+                    a = self._runtime_frame_ema_alpha
+                    self._runtime_frame_ema_ms = (a * v) + ((1.0 - a) * self._runtime_frame_ema_ms)
         except (TypeError, ValueError):
             return
 
@@ -242,9 +295,7 @@ class BodyAwareGarmentFitter:
 
         # Observation gate 1: lighting quality
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        if float(np.mean(gray)) < self._MIN_BRIGHTNESS:
-            self.last_detection_status = 'poor_lighting'
-            return None
+        low_light = float(np.mean(gray)) < self._MIN_BRIGHTNESS
 
         # Opportunistic physical calibration (runs until a valid red square is seen)
         self._try_red_square_calibration(frame)
@@ -255,13 +306,9 @@ class BodyAwareGarmentFitter:
         # Create MediaPipe Image
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
         
-        # Use REAL elapsed time for timestamps (fixes frame rejection at non-30fps)
-        elapsed_ns = time.monotonic_ns() - self._start_time_ns
-        timestamp_ms = elapsed_ns // 1_000_000
-        
         self.total_detections += 1
         t_detect = time.perf_counter()
-        detection_result = self.detector.detect_for_video(mp_image, timestamp_ms)
+        detection_result = self.detector.detect(mp_image)
         detect_ms = (time.perf_counter() - t_detect) * 1000
         if detect_ms > 10:  # Only log if significant
             logger.debug(f"[Pose] MediaPipe detection: {detect_ms:.1f}ms")
@@ -301,13 +348,9 @@ class BodyAwareGarmentFitter:
         left_ankle = landmarks[27] if len(landmarks) > 27 else None
         right_ankle = landmarks[28] if len(landmarks) > 28 else None
 
-        critical_vis = [left_shoulder.visibility, right_shoulder.visibility, left_hip.visibility, right_hip.visibility]
-        if nose is not None:
-            critical_vis.append(nose.visibility)
-        if left_ankle is not None:
-            critical_vis.append(left_ankle.visibility)
-        if right_ankle is not None:
-            critical_vis.append(right_ankle.visibility)
+        # Upper-body try-on should remain usable when lower-body landmarks are
+        # cropped. Hard gate only on shoulder visibility.
+        critical_vis = [left_shoulder.visibility, right_shoulder.visibility]
 
         avg_confidence = float(np.mean(np.array(critical_vis, dtype=np.float32)))
         self.last_confidence = avg_confidence
@@ -317,13 +360,30 @@ class BodyAwareGarmentFitter:
             logger.debug(f"Low landmark confidence: {avg_confidence:.2f}")
             return None
         
-        self.last_detection_status = 'detected'
+        self.last_detection_status = 'detected_low_light' if low_light else 'detected'
         
         # Geometric points in pixel space
         ls = self._landmark_px(left_shoulder, w, h)
         rs = self._landmark_px(right_shoulder, w, h)
-        lh = self._landmark_px(left_hip, w, h)
-        rh = self._landmark_px(right_hip, w, h)
+
+        shoulder_width_raw = abs(right_shoulder.x - left_shoulder.x) * w
+
+        # If hips are unreliable, infer an upper-body hip band from shoulder
+        # geometry so garment placement still tracks movement.
+        hips_reliable = min(left_hip.visibility, right_hip.visibility) >= 0.35
+        if hips_reliable:
+            lh = self._landmark_px(left_hip, w, h)
+            rh = self._landmark_px(right_hip, w, h)
+            hip_width_raw = abs(right_hip.x - left_hip.x) * w
+            hip_vis_proxy = min(left_hip.visibility, right_hip.visibility)
+        else:
+            shoulder_mid_y = float((ls[1] + rs[1]) * 0.5)
+            inferred_drop = max(shoulder_width_raw * 1.05, h * 0.20)
+            inferred_y = float(min(h - 2, shoulder_mid_y + inferred_drop))
+            lh = np.array([ls[0], inferred_y], dtype=np.float32)
+            rh = np.array([rs[0], inferred_y], dtype=np.float32)
+            hip_width_raw = max(shoulder_width_raw * 0.82, 1.0)
+            hip_vis_proxy = min(left_shoulder.visibility, right_shoulder.visibility) * 0.65
 
         shoulder_mid = (ls + rs) * 0.5
         hip_mid = (lh + rh) * 0.5
@@ -334,11 +394,9 @@ class BodyAwareGarmentFitter:
         cos_yaw = max(0.55, float(np.cos(np.clip(abs(yaw_rad), 0.0, np.deg2rad(65.0)))))
 
         # Raw measurements in pixels (frontal-corrected where relevant)
-        shoulder_width_raw = abs(right_shoulder.x - left_shoulder.x) * w
         shoulder_width = shoulder_width_raw / cos_yaw
         torso_height_raw = self._safe_distance(shoulder_mid, hip_mid)
         torso_height = torso_height_raw
-        hip_width_raw = abs(right_hip.x - left_hip.x) * w
         hip_width = hip_width_raw / cos_yaw
 
         # --- Depth normalisation DISABLED ---
@@ -351,10 +409,10 @@ class BodyAwareGarmentFitter:
         # )
 
         # Calculate torso bounding box
-        torso_x1 = int(max(0, min(left_shoulder.x, left_hip.x) * w))
+        torso_x1 = int(max(0, min(ls[0], rs[0], lh[0], rh[0])))
         torso_y1 = int(max(0, min(left_shoulder.y, right_shoulder.y) * h))
-        torso_x2 = int(min(w - 1, max(right_shoulder.x, right_hip.x) * w))
-        torso_y2 = int(min(h - 1, max(left_hip.y, right_hip.y) * h))
+        torso_x2 = int(min(w - 1, max(ls[0], rs[0], lh[0], rh[0])))
+        torso_y2 = int(min(h - 1, max(lh[1], rh[1])))
         
         # Get body segmentation mask (conditioned silhouette)
         body_mask = None
@@ -373,7 +431,7 @@ class BodyAwareGarmentFitter:
 
         shoulder_conf = self._clip_conf(min(left_shoulder.visibility, right_shoulder.visibility) * (0.55 + 0.45 * frontality_score))
         torso_conf = self._clip_conf(min(left_shoulder.visibility, right_shoulder.visibility, left_hip.visibility, right_hip.visibility) * torso_sym_score)
-        hip_conf = self._clip_conf(min(left_hip.visibility, right_hip.visibility) * (0.55 + 0.45 * frontality_score))
+        hip_conf = self._clip_conf(hip_vis_proxy * (0.55 + 0.45 * frontality_score))
 
         # Mask-based chest / waist estimation
         chest_y = int(np.clip((shoulder_mid[1] + torso_height * 0.20), 0, h - 1))
@@ -467,6 +525,10 @@ class BodyAwareGarmentFitter:
             # Reduce confidence when side rotation is too high
             for k in ('shoulder', 'chest', 'waist', 'hip'):
                 metric_confidence[k] *= 0.65
+
+        if low_light:
+            for k in ('shoulder', 'chest', 'torso', 'hip', 'waist'):
+                metric_confidence[k] *= 0.85
 
         # Import size recommendation system
         try:
@@ -680,6 +742,226 @@ class BodyAwareGarmentFitter:
 
         return float(norm_shoulder), float(norm_torso)
 
+    def _get_blend_weights(self, height: int, blend_px: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Create cached vertical blend weights for upper/mid/lower regions."""
+        key = (int(height), int(blend_px))
+        cached = self._blend_weight_cache.get(key)
+        if cached is not None:
+            return cached
+
+        h = max(2, int(height))
+        b = max(1, int(blend_px))
+        y = np.arange(h, dtype=np.float32)
+        y1 = float(h) / 3.0
+        y2 = float(2.0 * h) / 3.0
+
+        def _smoothstep(x: np.ndarray) -> np.ndarray:
+            x = np.clip(x, 0.0, 1.0)
+            return x * x * (3.0 - 2.0 * x)
+
+        t1 = _smoothstep((y - (y1 - b)) / max(1.0, 2.0 * b))
+        t2 = _smoothstep((y - (y2 - b)) / max(1.0, 2.0 * b))
+
+        w_upper = (1.0 - t1)
+        w_mid = t1 * (1.0 - t2)
+        w_lower = t2
+
+        # Normalize row-wise to keep total energy stable.
+        s = np.maximum(1e-6, w_upper + w_mid + w_lower)
+        w_upper = (w_upper / s).reshape(h, 1, 1).astype(np.float32)
+        w_mid = (w_mid / s).reshape(h, 1, 1).astype(np.float32)
+        w_lower = (w_lower / s).reshape(h, 1, 1).astype(np.float32)
+
+        self._blend_weight_cache[key] = (w_upper, w_mid, w_lower)
+        return self._blend_weight_cache[key]
+
+    def _fit_piecewise_affine(
+        self,
+        garment_rgb: np.ndarray,
+        garment_mask: np.ndarray,
+        landmarks,
+        garment_x1: int,
+        garment_y1: int,
+        frame_w: int,
+        frame_h: int,
+    ) -> Tuple[np.ndarray, np.ndarray, Dict[str, float]]:
+        """Apply 3-region piecewise affine warp driven by shoulders/hips."""
+        full_h, full_w = garment_rgb.shape[:2]
+        if full_h < 2 or full_w < 2:
+            return garment_rgb, garment_mask, {'down_ms': 0.0, 'warp_ms': 0.0, 'up_ms': 0.0}
+
+        t_down_ms = 0.0
+        t_warp_ms = 0.0
+        t_up_ms = 0.0
+
+        warp_scale = float(np.clip(getattr(self, '_nonrigid_warp_scale', 1.0), 0.25, 1.0))
+        if warp_scale < 0.999:
+            t_down = time.perf_counter()
+            low_w = max(2, int(round(full_w * warp_scale)))
+            low_h = max(2, int(round(full_h * warp_scale)))
+            work_rgb = cv2.resize(garment_rgb, (low_w, low_h), interpolation=cv2.INTER_AREA)
+            work_mask = cv2.resize(garment_mask, (low_w, low_h), interpolation=cv2.INTER_AREA)
+            t_down_ms = (time.perf_counter() - t_down) * 1000.0
+            sx = float(low_w) / float(max(1, full_w))
+            sy = float(low_h) / float(max(1, full_h))
+        else:
+            low_w, low_h = full_w, full_h
+            work_rgb = garment_rgb
+            work_mask = garment_mask
+            sx, sy = 1.0, 1.0
+
+        gh, gw = work_rgb.shape[:2]
+
+        ls = np.array([
+            float((landmarks[11].x * frame_w - garment_x1) * sx),
+            float((landmarks[11].y * frame_h - garment_y1) * sy)
+        ], dtype=np.float32)
+        rs = np.array([
+            float((landmarks[12].x * frame_w - garment_x1) * sx),
+            float((landmarks[12].y * frame_h - garment_y1) * sy)
+        ], dtype=np.float32)
+        lh = np.array([
+            float((landmarks[23].x * frame_w - garment_x1) * sx),
+            float((landmarks[23].y * frame_h - garment_y1) * sy)
+        ], dtype=np.float32)
+        rh = np.array([
+            float((landmarks[24].x * frame_w - garment_x1) * sx),
+            float((landmarks[24].y * frame_h - garment_y1) * sy)
+        ], dtype=np.float32)
+
+        shoulder_y = float(np.clip((ls[1] + rs[1]) * 0.5, 0.0, gh - 1.0))
+        hip_y = float(np.clip((lh[1] + rh[1]) * 0.5, shoulder_y + 1.0, gh - 1.0))
+        torso_span = max(8.0, hip_y - shoulder_y)
+
+        # Region boundaries in output garment space.
+        yb = np.array([0.0, gh / 3.0, 2.0 * gh / 3.0, gh - 1.0], dtype=np.float32)
+
+        shoulder_width = float(max(2.0, np.linalg.norm(rs - ls)))
+        hip_width = float(max(2.0, np.linalg.norm(rh - lh)))
+
+        def _edge_x(yv: float, left: bool) -> float:
+            t = (yv - shoulder_y) / max(1e-6, torso_span)
+            t = float(np.clip(t, 0.0, 1.0))
+            if left:
+                x = ls[0] + t * (lh[0] - ls[0])
+                width = shoulder_width + t * (hip_width - shoulder_width)
+                return float(x - 0.04 * width)
+            x = rs[0] + t * (rh[0] - rs[0])
+            width = shoulder_width + t * (hip_width - shoulder_width)
+            return float(x + 0.04 * width)
+
+        xl = np.array([_edge_x(float(v), True) for v in yb], dtype=np.float32)
+        xr = np.array([_edge_x(float(v), False) for v in yb], dtype=np.float32)
+
+        # Clamp per-region width scaling to avoid overstretch artifacts.
+        src_width = float(max(2, gw - 1))
+        for i in range(3):
+            top_w = max(2.0, xr[i] - xl[i])
+            bot_w = max(2.0, xr[i + 1] - xl[i + 1])
+            avg_w = 0.5 * (top_w + bot_w)
+            scale = float(np.clip(avg_w / src_width, self._nonrigid_min_scale, self._nonrigid_max_scale))
+            target_w = scale * src_width
+            c_top = 0.5 * (xl[i] + xr[i])
+            c_bot = 0.5 * (xl[i + 1] + xr[i + 1])
+            xl[i] = c_top - 0.5 * target_w
+            xr[i] = c_top + 0.5 * target_w
+            xl[i + 1] = c_bot - 0.5 * target_w
+            xr[i + 1] = c_bot + 0.5 * target_w
+
+        def _warp_region(src_img: np.ndarray, region_idx: int, is_mask: bool = False) -> np.ndarray:
+            y0 = float(yb[region_idx])
+            y1 = float(yb[region_idx + 1])
+            src_tri = np.array(
+                [[0.0, y0], [gw - 1.0, y0], [0.0, y1]], dtype=np.float32
+            )
+            dst_tri = np.array(
+                [[xl[region_idx], y0], [xr[region_idx], y0], [xl[region_idx + 1], y1]], dtype=np.float32
+            )
+            m = cv2.getAffineTransform(src_tri, dst_tri)
+            interp = cv2.INTER_NEAREST if is_mask else cv2.INTER_LINEAR
+            border = 0 if is_mask else 0
+            return cv2.warpAffine(
+                src_img,
+                m,
+                (gw, gh),
+                flags=interp,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=border,
+            )
+
+        t_warp = time.perf_counter()
+        rg0 = _warp_region(work_rgb, 0, is_mask=False)
+        rg1 = _warp_region(work_rgb, 1, is_mask=False)
+        rg2 = _warp_region(work_rgb, 2, is_mask=False)
+
+        rm0 = _warp_region(work_mask, 0, is_mask=True)
+        rm1 = _warp_region(work_mask, 1, is_mask=True)
+        rm2 = _warp_region(work_mask, 2, is_mask=True)
+
+        if rm0.ndim == 2:
+            rm0 = rm0[:, :, np.newaxis]
+        if rm1.ndim == 2:
+            rm1 = rm1[:, :, np.newaxis]
+        if rm2.ndim == 2:
+            rm2 = rm2[:, :, np.newaxis]
+
+        if rg0.ndim == 2:
+            rg0 = rg0[:, :, np.newaxis]
+        if rg1.ndim == 2:
+            rg1 = rg1[:, :, np.newaxis]
+        if rg2.ndim == 2:
+            rg2 = rg2[:, :, np.newaxis]
+
+        warped_rgb = rg0.copy()
+        warped_mask = rm0.copy()
+
+        b1 = int(gh / 3)
+        b2 = int(2 * gh / 3)
+        blend = int(max(4, min(self._nonrigid_blend_px, gh // 8)))
+
+        m0_s = max(0, b1 + blend)
+        m0_e = min(gh, b2 - blend)
+        if m0_e > m0_s:
+            warped_rgb[m0_s:m0_e] = rg1[m0_s:m0_e]
+            warped_mask[m0_s:m0_e] = rm1[m0_s:m0_e]
+
+        l_s = min(gh, max(0, b2 + blend))
+        if l_s < gh:
+            warped_rgb[l_s:] = rg2[l_s:]
+            warped_mask[l_s:] = rm2[l_s:]
+
+        s1 = max(0, b1 - blend)
+        e1 = min(gh, b1 + blend)
+        if e1 > s1:
+            t = np.linspace(0.0, 1.0, e1 - s1, dtype=np.float32).reshape(-1, 1, 1)
+            warped_rgb[s1:e1] = rg0[s1:e1] * (1.0 - t) + rg1[s1:e1] * t
+            warped_mask[s1:e1] = rm0[s1:e1] * (1.0 - t) + rm1[s1:e1] * t
+
+        s2 = max(0, b2 - blend)
+        e2 = min(gh, b2 + blend)
+        if e2 > s2:
+            t = np.linspace(0.0, 1.0, e2 - s2, dtype=np.float32).reshape(-1, 1, 1)
+            warped_rgb[s2:e2] = rg1[s2:e2] * (1.0 - t) + rg2[s2:e2] * t
+            warped_mask[s2:e2] = rm1[s2:e2] * (1.0 - t) + rm2[s2:e2] * t
+        t_warp_ms = (time.perf_counter() - t_warp) * 1000.0
+
+        warped_rgb = warped_rgb.astype(np.float32)
+        warped_mask = np.clip(warped_mask.astype(np.float32), 0.0, 1.0)
+
+        if warp_scale < 0.999:
+            t_up = time.perf_counter()
+            warped_rgb = cv2.resize(warped_rgb, (full_w, full_h), interpolation=cv2.INTER_LINEAR)
+            warped_mask = cv2.resize(warped_mask, (full_w, full_h), interpolation=cv2.INTER_LINEAR)
+            if warped_mask.ndim == 2:
+                warped_mask = warped_mask[:, :, np.newaxis]
+            t_up_ms = (time.perf_counter() - t_up) * 1000.0
+
+        return (
+            warped_rgb.astype(np.float32, copy=False),
+            np.clip(warped_mask.astype(np.float32, copy=False), 0.0, 1.0),
+            {'down_ms': float(t_down_ms), 'warp_ms': float(t_warp_ms), 'up_ms': float(t_up_ms)},
+        )
+
     def fit_garment_to_body(
         self,
         frame: np.ndarray,
@@ -707,11 +989,33 @@ class BodyAwareGarmentFitter:
         torso_height = body_measurements['torso_height']
         torso_x1, torso_y1, torso_x2, torso_y2 = body_measurements['torso_box']
         body_mask = body_measurements['body_mask']
+        landmarks = body_measurements.get('landmarks')
         
         # Calculate garment scaling
-        # Add 10% padding for natural fit
-        target_width = int(shoulder_width * 1.1)
-        target_height = int(torso_height * 1.2)
+        # Keep the garment slightly narrower than the raw shoulder span so it
+        # doesn't read as oversized, but extend the height enough to cover the
+        # lower torso and reduce the visible tee underneath.
+        target_width = int(max(shoulder_width * 1.02, (torso_x2 - torso_x1) * 0.92))
+        target_height = int(max(torso_height * 1.28, target_width * 1.18))
+        target_width = max(2, target_width)
+        target_height = max(2, target_height)
+
+        shoulder_mid_x = (torso_x1 + torso_x2) // 2
+        shoulder_top_y = torso_y1
+        if landmarks is not None and len(landmarks) > 24:
+            ls = landmarks[11]
+            rs = landmarks[12]
+            lh = landmarks[23]
+            rh = landmarks[24]
+            shoulder_mid_x = int(((ls.x + rs.x) * 0.5) * w)
+            shoulder_top_y = int(min(ls.y, rs.y) * h)
+            # Use the shoulder/hip span to place the shirt collar lower than
+            # the raw torso box top.  This keeps the garment out of the face.
+            torso_span = int(max(abs(lh.x - ls.x), abs(rh.x - rs.x)) * w)
+            target_width = max(target_width, int(torso_span * 0.94))
+            target_height = max(target_height, int(torso_height * 1.22))
+
+        collar_drop = max(8, int(torso_height * 0.08))
         
         # Resize garment to match body size
         garment_resized = cv2.resize(garment_rgb, (target_width, target_height), 
@@ -723,13 +1027,10 @@ class BodyAwareGarmentFitter:
         if mask_resized.ndim == 2:
             mask_resized = np.expand_dims(mask_resized, axis=-1)
         
-        # Calculate position (center on torso)
-        torso_center_x = (torso_x1 + torso_x2) // 2
-        torso_center_y = (torso_y1 + torso_y2) // 2
-        
-        # Position garment
-        garment_x1 = torso_center_x - target_width // 2
-        garment_y1 = torso_y1  # Align with shoulders
+        # Calculate position (center on the upper torso, but keep the collar
+        # below the face and slightly lower than the raw shoulder line).
+        garment_x1 = shoulder_mid_x - target_width // 2
+        garment_y1 = shoulder_top_y + collar_drop
         garment_x2 = garment_x1 + target_width
         garment_y2 = garment_y1 + target_height
         
@@ -745,19 +1046,108 @@ class BodyAwareGarmentFitter:
         
         # Guard: skip if region is too small or empty
         if actual_width < 2 or actual_height < 2:
+            self._last_fit_diag = {
+                'roi_area': 0.0,
+                'roi_ratio': 0.0,
+                'post_ms': 0.0,
+                'post_mask_ms': 0.0,
+                'post_compose_ms': 0.0,
+                'post_cvt_ms': 0.0,
+                'post_writeback_ms': 0.0,
+            }
             return frame
         
         if actual_width != target_width or actual_height != target_height:
             garment_resized = garment_resized[:actual_height, :actual_width]
             mask_resized = mask_resized[:actual_height, :actual_width]
+
+        if (
+            self.use_nonrigid_warp
+            and landmarks is not None
+            and len(landmarks) > 24
+        ):
+            self._nonrigid_frame_counter += 1
+            self._nonrigid_frames_since_refresh += 1
+
+            cache_invalid = (
+                self._cached_nonrigid_rgb is None
+                or self._cached_nonrigid_mask is None
+                or self._cached_nonrigid_rgb.shape != garment_resized.shape
+                or self._cached_nonrigid_mask.shape != mask_resized.shape
+            )
+
+            headroom_threshold = self._nonrigid_budget_ms - self._nonrigid_margin_ms
+            decision_frame_ms = self._runtime_frame_ema_ms if self._runtime_frame_ema_ms > 0.0 else self._runtime_last_frame_ms
+            has_headroom = decision_frame_ms <= headroom_threshold
+            target_interval = self._nonrigid_update_interval if has_headroom else self._nonrigid_backoff_interval
+            should_refresh = cache_invalid or (self._nonrigid_frames_since_refresh >= target_interval)
+
+            if should_refresh:
+                warped_rgb, warped_mask, nr_stage = self._fit_piecewise_affine(
+                    garment_resized,
+                    mask_resized,
+                    landmarks,
+                    garment_x1,
+                    garment_y1,
+                    w,
+                    h,
+                )
+
+                blend_ms = 0.0
+                if (
+                    self._cached_nonrigid_rgb is not None
+                    and self._cached_nonrigid_mask is not None
+                    and self._cached_nonrigid_rgb.shape == warped_rgb.shape
+                    and self._cached_nonrigid_mask.shape == warped_mask.shape
+                ):
+                    t_blend = time.perf_counter()
+                    a = float(np.clip(self._nonrigid_refresh_blend_alpha, 0.0, 1.0))
+                    warped_rgb = self._cached_nonrigid_rgb * (1.0 - a) + warped_rgb * a
+                    warped_mask = self._cached_nonrigid_mask * (1.0 - a) + warped_mask * a
+                    blend_ms = (time.perf_counter() - t_blend) * 1000.0
+
+                self._cached_nonrigid_rgb = warped_rgb.astype(np.float32, copy=False)
+                self._cached_nonrigid_mask = np.clip(warped_mask.astype(np.float32, copy=False), 0.0, 1.0)
+                self._nonrigid_frames_since_refresh = 0
+
+                if self._nonrigid_profile_enabled:
+                    self._nonrigid_profile_counter += 1
+                    if self._nonrigid_profile_counter % self._nonrigid_profile_every == 0:
+                        logger.info(
+                            "[NONRIGID PROFILE] down=%.2fms warp=%.2fms up=%.2fms blend=%.2fms scale=%.2f interval=%d frame_ms=%.2f ema_ms=%.2f",
+                            nr_stage.get('down_ms', 0.0),
+                            nr_stage.get('warp_ms', 0.0),
+                            nr_stage.get('up_ms', 0.0),
+                            blend_ms,
+                            float(self._nonrigid_warp_scale),
+                            int(target_interval),
+                            float(self._runtime_last_frame_ms),
+                            float(self._runtime_frame_ema_ms),
+                        )
+
+            garment_resized = self._cached_nonrigid_rgb
+            mask_resized = self._cached_nonrigid_mask
+
+        roi_area = float(actual_width * actual_height)
+        roi_ratio = float(roi_area / max(1.0, float(w * h)))
+        t_post0 = time.perf_counter()
         
         # Extract frame region
         frame_region = frame[garment_y1:garment_y2, garment_x1:garment_x2]
         if frame_region.size == 0:
+            self._last_fit_diag = {
+                'roi_area': roi_area,
+                'roi_ratio': roi_ratio,
+                'post_ms': 0.0,
+                'post_mask_ms': 0.0,
+                'post_compose_ms': 0.0,
+                'post_cvt_ms': 0.0,
+                'post_writeback_ms': 0.0,
+            }
             return frame
-        frame_region_rgb = cv2.cvtColor(frame_region, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         
         # Apply body mask if available
+        t_mask = time.perf_counter()
         if body_mask is not None:
             body_mask_region = body_mask[garment_y1:garment_y2, garment_x1:garment_x2]
             if body_mask_region.ndim == 2:
@@ -767,18 +1157,66 @@ class BodyAwareGarmentFitter:
             combined_mask = mask_resized * body_mask_region
         else:
             combined_mask = mask_resized
+        if combined_mask.ndim == 3:
+            combined_mask = combined_mask[:, :, 0]
+        mask_u8 = (combined_mask > 0.5).astype(np.uint8) * 255
+        mask_ms = (time.perf_counter() - t_mask) * 1000.0
         
-        # Alpha composite: garment * mask + background * (1 - mask)
-        composite = garment_resized * combined_mask + frame_region_rgb * (1 - combined_mask)
-        
-        # Convert back to BGR uint8
-        composite_bgr = cv2.cvtColor((composite * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
-        
-        # Blend into frame
         output = frame.copy()
-        output[garment_y1:garment_y2, garment_x1:garment_x2] = composite_bgr
+        output_roi = output[garment_y1:garment_y2, garment_x1:garment_x2]
+        warped_u8 = np.clip(garment_resized * 255.0, 0.0, 255.0).astype(np.uint8)
+
+        # cvtColor-only timing retained for diagnostics parity.
+        t_cvt = time.perf_counter()
+        warped_bgr = cv2.cvtColor(warped_u8, cv2.COLOR_RGB2BGR)
+        cvt_ms = (time.perf_counter() - t_cvt) * 1000.0
+
+        # Fast compose path: binary masked copy avoids float blend passes.
+        t_comp = time.perf_counter()
+        cv2.copyTo(warped_bgr, mask_u8, output_roi)
+        comp_ms = (time.perf_counter() - t_comp) * 1000.0
+        
+        # writeback is done in-place through output ROI view above.
+        t_write = time.perf_counter()
+        _ = output_roi
+        write_ms = (time.perf_counter() - t_write) * 1000.0
+
+        post_ms = (time.perf_counter() - t_post0) * 1000.0
+        self._last_fit_diag = {
+            'roi_area': roi_area,
+            'roi_ratio': roi_ratio,
+            'post_ms': float(post_ms),
+            'post_mask_ms': float(mask_ms),
+            'post_compose_ms': float(comp_ms),
+            'post_cvt_ms': float(cvt_ms),
+            'post_writeback_ms': float(write_ms),
+        }
+
+        if self._nonrigid_profile_enabled and post_ms > 25.0:
+            logger.warning(
+                "[NONRIGID POST] roi_area=%.0f roi_ratio=%.3f post=%.2fms",
+                roi_area,
+                roi_ratio,
+                post_ms,
+            )
+
+        if self._nonrigid_profile_enabled:
+            self._nonrigid_post_profile_counter += 1
+            if self._nonrigid_post_profile_counter % self._nonrigid_post_profile_every == 0:
+                logger.info(
+                    "[NONRIGID POST PROFILE] mask=%.2fms compose=%.2fms cvt=%.2fms write=%.2fms post=%.2fms roi_ratio=%.3f",
+                    mask_ms,
+                    comp_ms,
+                    cvt_ms,
+                    write_ms,
+                    post_ms,
+                    roi_ratio,
+                )
         
         return output
+
+    def get_last_fit_diag(self) -> Dict[str, float]:
+        return dict(self._last_fit_diag)
     
     def get_diagnostics(self) -> Dict[str, Any]:
         """Return diagnostic info about MediaPipe detection quality"""

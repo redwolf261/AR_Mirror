@@ -3,6 +3,7 @@ import './App.css';
 import Header from './components/Header';
 import FitEngineMode from './components/FitEngineMode';
 import GarmentOverlayMode from './components/GarmentOverlayMode';
+import Parallel3DMode from './components/Parallel3DMode';
 import config from './config';
 
 /**
@@ -128,7 +129,33 @@ function App() {
         onToggleFitEngine={null}
       />
 
-      {viewMode === 'fitengine' ? (
+      <div className="parallel3d-nav">
+        <button
+          type="button"
+          className={viewMode === 'fitengine' ? 'parallel3d-nav-btn active' : 'parallel3d-nav-btn'}
+          onClick={() => setViewMode('fitengine')}
+        >
+          FitEngine
+        </button>
+        <button
+          type="button"
+          className={viewMode === 'overlay' ? 'parallel3d-nav-btn active' : 'parallel3d-nav-btn'}
+          onClick={() => setViewMode('overlay')}
+        >
+          Overlay
+        </button>
+        <button
+          type="button"
+          className={viewMode === 'parallel3d' ? 'parallel3d-nav-btn active' : 'parallel3d-nav-btn'}
+          onClick={() => setViewMode('parallel3d')}
+        >
+          Parallel 3D
+        </button>
+      </div>
+
+      {viewMode === 'parallel3d' ? (
+        <Parallel3DMode onBack={() => setViewMode('fitengine')} />
+      ) : viewMode === 'fitengine' ? (
         <FitEngineMode
           apiBase={API_BASE}
           state={systemState}
