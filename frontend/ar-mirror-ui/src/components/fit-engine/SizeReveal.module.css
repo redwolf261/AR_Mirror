@@ -1,0 +1,39 @@
+.wrapper {
+  margin-bottom: 14px;
+}
+
+.kicker {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+}
+
+.core {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.letter {
+  font-size: 74px;
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-shadow: 0 0 24px var(--accent-violet-glow);
+}
+
+.ringWrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.ringWrap span {
+  position: absolute;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--accent-cyan);
+}

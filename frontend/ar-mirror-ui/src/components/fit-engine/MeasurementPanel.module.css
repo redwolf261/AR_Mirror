@@ -1,0 +1,93 @@
+.panel {
+  background: rgba(13, 13, 24, 0.7);
+  backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric {
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  gap: 10px;
+}
+
+.icon {
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.name {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.value {
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+.scoreRow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.scorePill {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle);
+  padding: 6px 8px;
+}
+
+.scoreLabel {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: capitalize;
+  margin-bottom: 4px;
+}
+
+.track {
+  height: 5px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+
+.fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-violet), var(--accent-cyan));
+}
+
+.tips {
+  background: rgba(2, 12, 8, 0.65);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: 12px;
+  padding: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--success);
+  min-height: 124px;
+}
+
+.tips p {
+  margin: 0 0 6px;
+}
+
+@media (max-width: 1320px) {
+  .scoreRow {
+    grid-template-columns: 1fr;
+  }
+}

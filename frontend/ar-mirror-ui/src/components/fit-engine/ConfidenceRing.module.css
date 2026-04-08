@@ -1,0 +1,15 @@
+.ring {
+  transform: rotate(-90deg);
+}
+
+.track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.12);
+}
+
+.progress {
+  fill: none;
+  stroke: var(--accent-cyan);
+  filter: drop-shadow(0 0 4px var(--accent-cyan-glow));
+  transition: stroke-dashoffset 0.35s ease;
+}

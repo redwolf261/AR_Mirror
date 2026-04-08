@@ -637,7 +637,7 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
                 continue
 
             seq, frame, _ = self._get_capture_snapshot()
-            if frame is None or seq == last_seq:
+            if frame is None or seq == last_seq or (seq - last_seq) < self._pose_skip_interval:
                 time.sleep(0.003)
                 continue
 
@@ -665,14 +665,20 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
 
     def _seg_worker_loop(self):
         last_seq = -1
+        skip_frames_remaining = 0
         while not self._stop_workers.is_set():
             t0 = time.perf_counter()
             if not self.segmentation_fitter:
                 time.sleep(0.05)
                 continue
 
+            if skip_frames_remaining > 0:
+                skip_frames_remaining -= 1
+                time.sleep(0.005)
+                continue
+
             seq, frame, _ = self._get_capture_snapshot()
-            if frame is None or seq == last_seq:
+            if frame is None or seq == last_seq or (seq - last_seq) < self._semantic_skip_interval:
                 time.sleep(0.02)
                 continue
 
@@ -687,7 +693,14 @@ class ARMirrorApp(GarmentRenderer, OverlayRenderer):
 
             last_seq = seq
             self._diag_seg_loop_ms = (time.perf_counter() - t0) * 1000.0
-            time.sleep(0.08)
+            if self._diag_seg_loop_ms > 100.0:
+                skip_frames_remaining = max(
+                    skip_frames_remaining,
+                    int(np.ceil(self._diag_seg_loop_ms / 33.0)) - 1,
+                )
+            else:
+                skip_frames_remaining = max(skip_frames_remaining, self._semantic_skip_interval - 1)
+            time.sleep(0.005)
 
     def _start_pipeline_workers(self):
         self._stop_workers.clear()

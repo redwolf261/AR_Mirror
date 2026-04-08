@@ -1,0 +1,55 @@
+.card {
+  position: relative;
+  overflow: hidden;
+  min-height: 360px;
+  border-radius: 16px;
+  background: rgba(13, 13, 24, 0.7);
+  backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.active {
+  box-shadow: 0 0 0 1px var(--border-glow), 0 0 32px var(--accent-violet-glow);
+}
+
+.badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  background: rgba(5, 5, 10, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.videoBackdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(124, 58, 237, 0.2), transparent 45%),
+    radial-gradient(circle at 80% 80%, rgba(6, 182, 212, 0.17), transparent 45%),
+    linear-gradient(145deg, #0f1328, #0b0d1e 52%, #101a2f);
+}
+
+.bottomBar {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 4;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(8, 8, 15, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.instructionPill {
+  color: var(--text-secondary);
+  font-size: 13px;
+}

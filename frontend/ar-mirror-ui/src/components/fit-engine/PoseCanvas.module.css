@@ -1,0 +1,23 @@
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.bone {
+  stroke: rgba(6, 182, 212, 0.3);
+  stroke-width: 1;
+}
+
+.joint {
+  fill: var(--accent-cyan);
+  filter: drop-shadow(0 0 6px var(--accent-cyan-glow));
+}
+
+.activeJoint {
+  fill: white;
+  stroke: var(--accent-cyan);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 10px var(--accent-cyan-glow));
+}
