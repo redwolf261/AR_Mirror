@@ -1,0 +1,20 @@
+feat: garment body-wrapping improvements + CatVTON pre-warper
+
+Core rendering (src/app/rendering.py):
+- Body-silhouette-conforming garment placement via body_mask bounds
+- Silhouette-feathered alpha: dilation + Gaussian blur on mask edge
+- Temporal smoothing 80/20 blend with previous frame
+- Fix numpy array truth-value bug in cloth_bgr ternary expression
+- CatVTON render path wired in before GMM path
+
+Geometric warp (src/hybrid/learned_warping/warper.py):
+- Real 4-point perspective warp from shoulder/hip heatmap peaks
+- RBF Gaussian TPS warp replacing placeholder stub
+
+New: src/core/catvton_prewarper.py
+- Offline diffusion warper, SSIM pose-change detection
+- Local HuggingFace cache check; no network calls mid-render
+- Model ID: Zheng-Chong/CatVTON
+
+New: scripts/download_models.py
+- HR-VITON, SCHP-LIP, DensePose download helpers

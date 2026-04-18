@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 340" fill="none">
+  <!-- White polo body -->
+  <path d="M90 60 L30 110 L60 130 L60 280 L240 280 L240 130 L270 110 L210 60 L180 80 C175 90 163 100 150 100 C137 100 125 90 120 80 Z" fill="#f1f5f9" opacity="0.95"/>
+  <!-- Polo collar -->
+  <path d="M120 60 L130 80 L145 95 L155 95 L170 80 L180 60 L165 52 L150 70 L135 52 Z" fill="#cbd5e1"/>
+  <!-- Polo placket -->
+  <rect x="144" y="95" width="12" height="60" fill="#e2e8f0" rx="2"/>
+  <!-- Polo placket buttons -->
+  <circle cx="150" cy="110" r="3" fill="#94a3b8"/>
+  <circle cx="150" cy="130" r="3" fill="#94a3b8"/>
+  <circle cx="150" cy="150" r="3" fill="#94a3b8"/>
+  <!-- Sleeves -->
+  <path d="M90 60 L30 110 L60 130 L82 115 L105 75 Z" fill="#e2e8f0"/>
+  <path d="M210 60 L270 110 L240 130 L218 115 L195 75 Z" fill="#e2e8f0"/>
+  <!-- Sleeve stripes -->
+  <line x1="42" y1="120" x2="72" y2="135" stroke="#3b82f6" stroke-width="5" opacity="0.6"/>
+  <line x1="258" y1="120" x2="228" y2="135" stroke="#3b82f6" stroke-width="5" opacity="0.6"/>
+</svg>

@@ -1,0 +1,652 @@
+/**
+ * =============================================================================
+ * AR MIRROR - APPLE-INSPIRED DESIGN SYSTEM
+ * Complete CSS Variables & Component Reference
+ * =============================================================================
+ */
+
+/* =============================================================================
+   DESIGN TOKENS - Apple-Style Refinement
+   ============================================================================= */
+
+:root {
+  /* ─────────────────────────────────────────────────────────────────────────
+     COLOR SYSTEM - Soft, Neutral, Refined
+     ───────────────────────────────────────────────────────────────────────── */
+
+  /* Base Colors */
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  /* Backgrounds - Light, Clean */
+  --color-background: #ffffff;
+  --color-surface: #f5f5f7;          /* Apple's light gray */
+  --color-surface-elevated: #ffffff;
+  --color-surface-hover: rgba(0, 0, 0, 0.03);
+
+  /* Borders - Extremely Subtle */
+  --color-border: rgba(0, 0, 0, 0.08);
+  --color-border-light: rgba(0, 0, 0, 0.04);
+  --color-border-hover: rgba(0, 0, 0, 0.12);
+
+  /* Text - Clear Hierarchy */
+  --color-text-primary: #1d1d1f;     /* Apple's near-black */
+  --color-text-secondary: #6e6e73;   /* Gray */
+  --color-text-tertiary: #86868b;    /* Light gray */
+  --color-text-placeholder: #c7c7cc;
+
+  /* Accent - Apple Blue */
+  --color-accent: #0071e3;
+  --color-accent-hover: #0077ED;
+  --color-accent-light: rgba(0, 113, 227, 0.1);
+  --color-accent-lighter: rgba(0, 113, 227, 0.05);
+
+  /* Semantic Colors */
+  --color-success: #34c759;          /* Green */
+  --color-warning: #ff9500;          /* Orange */
+  --color-error: #ff3b30;            /* Red */
+  --color-info: #5ac8fa;             /* Blue */
+
+  /* Skeleton & Pose - Soft, Not Neon */
+  --color-skeleton: #0071e3;
+  --color-skeleton-secondary: #0066cc;
+  --color-keypoint: rgba(0, 113, 227, 0.9);
+  --color-keypoint-border: rgba(255, 255, 255, 0.3);
+
+  /* ─────────────────────────────────────────────────────────────────────────
+     SPACING SYSTEM - 8px Base Grid
+     ───────────────────────────────────────────────────────────────────────── */
+
+  --space-xs: 4px;     /* Tight gaps */
+  --space-sm: 8px;     /* Component padding */
+  --space-md: 16px;    /* Section spacing */
+  --space-lg: 24px;    /* Panel padding */
+  --space-xl: 32px;    /* Major sections */
+  --space-2xl: 48px;   /* Page-level */
+  --space-3xl: 64px;   /* Hero sections */
+  --space-4xl: 96px;   /* Extra large */
+
+  /* ─────────────────────────────────────────────────────────────────────────
+     TYPOGRAPHY - SF Pro-Inspired (Inter Font)
+     ───────────────────────────────────────────────────────────────────────── */
+
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display',
+                 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  --font-family-mono: 'SF Mono', Monaco, 'Cascadia Code', 'Courier New', monospace;
+
+  /* Font Sizes - Apple's Scale */
+  --font-size-xs: 11px;      /* Captions, legal */
+  --font-size-sm: 13px;      /* Secondary text */
+  --font-size-base: 15px;    /* Body text */
+  --font-size-md: 17px;      /* Emphasized body */
+  --font-size-lg: 21px;      /* Subheadings */
+  --font-size-xl: 28px;      /* Headings */
+  --font-size-2xl: 40px;     /* Large headings */
+  --font-size-3xl: 64px;     /* Hero text */
+
+  /* Font Weights */
+  --font-weight-light: 300;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Line Heights */
+  --line-height-tight: 1.2;
+  --line-height-base: 1.6;
+  --line-height-relaxed: 1.8;
+
+  /* Letter Spacing */
+  --letter-spacing-tight: -0.5px;    /* Headings */
+  --letter-spacing-normal: 0;
+  --letter-spacing-wide: 0.3px;      /* Labels */
+  --letter-spacing-wider: 0.5px;     /* Uppercase */
+
+  /* ─────────────────────────────────────────────────────────────────────────
+     BORDER RADIUS - Rounded Corners
+     ───────────────────────────────────────────────────────────────────────── */
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* ─────────────────────────────────────────────────────────────────────────
+     SHADOWS - Very Subtle, Never Harsh
+     ───────────────────────────────────────────────────────────────────────── */
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04),
+               0 1px 2px rgba(0, 0, 0, 0.02);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06),
+               0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.08),
+               0 4px 8px rgba(0, 0, 0, 0.04);
+  --shadow-xl: 0 16px 64px rgba(0, 0, 0, 0.12),
+               0 8px 16px rgba(0, 0, 0, 0.08);
+
+  /* ─────────────────────────────────────────────────────────────────────────
+     TRANSITIONS - Apple's Easing Curves
+     ───────────────────────────────────────────────────────────────────────── */
+
+  /* Timing Functions */
+  --ease-out: cubic-bezier(0.4, 0, 0.2, 1);     /* Apple's standard */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Durations */
+  --transition-fastest: 100ms;
+  --transition-fast: 150ms;
+  --transition-base: 250ms;
+  --transition-slow: 350ms;
+  --transition-slower: 500ms;
+
+  /* Combined */
+  --transition-fast-out: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base-out: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow-out: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ─────────────────────────────────────────────────────────────────────────
+     Z-INDEX SCALE - Layering System
+     ───────────────────────────────────────────────────────────────────────── */
+
+  --z-base: 1;
+  --z-dropdown: 10;
+  --z-sticky: 100;
+  --z-overlay: 200;
+  --z-modal: 300;
+  --z-toast: 400;
+
+  /* ─────────────────────────────────────────────────────────────────────────
+     BACKDROP EFFECTS - Glass Morphism (Apple-style)
+     ───────────────────────────────────────────────────────────────────────── */
+
+  --backdrop-blur: blur(20px);
+  --backdrop-saturate: saturate(180%);
+}
+
+/* =============================================================================
+   APPLE-STYLE COMPONENT PATTERNS
+   ============================================================================= */
+
+/* ─── Glass Panel ─────────────────────────────────────────────────────────── */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: var(--backdrop-blur) var(--backdrop-saturate);
+  border: 1px solid var(--color-border-light);
+  box-shadow: var(--shadow-md);
+}
+
+/* ─── Card with Hover ─────────────────────────────────────────────────────── */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  transition: all var(--transition-fast-out);
+}
+
+.card:hover {
+  background: var(--color-white);
+  border-color: var(--color-border);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+/* ─── iOS Toggle Switch (Exact Apple Dimensions) ──────────────────────────── */
+.ios-toggle {
+  position: relative;
+  width: 51px;
+  height: 31px;
+  background: rgba(120, 120, 128, 0.16);
+  border-radius: 16px;
+  cursor: pointer;
+  transition: background var(--transition-base-out);
+}
+
+.ios-toggle.active {
+  background: var(--color-accent);
+}
+
+.ios-toggle-handle {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  background: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15),
+              0 1px 1px rgba(0, 0, 0, 0.16),
+              0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  transition: transform var(--transition-base-out);
+}
+
+.ios-toggle.active .ios-toggle-handle {
+  transform: translateX(20px);
+}
+
+/* ─── Button (Apple-style) ──────────────────────────────────────────────── */
+.button-primary {
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 12px 24px;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-fast-out);
+}
+
+.button-primary:hover {
+  background: var(--color-accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.button-primary:active {
+  transform: translateY(0);
+}
+
+/* ─── Tag / Badge ────────────────────────────────────────────────────────── */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+}
+
+/* ─── Divider ────────────────────────────────────────────────────────────── */
+.divider {
+  height: 1px;
+  background: var(--color-border-light);
+  margin: var(--space-lg) 0;
+}
+
+/* =============================================================================
+   UTILITY CLASSES
+   ============================================================================= */
+
+/* Text Utilities */
+.text-primary { color: var(--color-text-primary); }
+.text-secondary { color: var(--color-text-secondary); }
+.text-tertiary { color: var(--color-text-tertiary); }
+.text-accent { color: var(--color-accent); }
+
+.text-xs { font-size: var(--font-size-xs); }
+.text-sm { font-size: var(--font-size-sm); }
+.text-base { font-size: var(--font-size-base); }
+.text-lg { font-size: var(--font-size-lg); }
+.text-xl { font-size: var(--font-size-xl); }
+
+.font-light { font-weight: var(--font-weight-light); }
+.font-regular { font-weight: var(--font-weight-regular); }
+.font-medium { font-weight: var(--font-weight-medium); }
+.font-semibold { font-weight: var(--font-weight-semibold); }
+.font-bold { font-weight: var(--font-weight-bold); }
+
+/* Spacing Utilities */
+.p-xs { padding: var(--space-xs); }
+.p-sm { padding: var(--space-sm); }
+.p-md { padding: var(--space-md); }
+.p-lg { padding: var(--space-lg); }
+.p-xl { padding: var(--space-xl); }
+
+.m-xs { margin: var(--space-xs); }
+.m-sm { margin: var(--space-sm); }
+.m-md { margin: var(--space-md); }
+.m-lg { margin: var(--space-lg); }
+.m-xl { margin: var(--space-xl); }
+
+/* Flex Utilities */
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.gap-sm { gap: var(--space-sm); }
+.gap-md { gap: var(--space-md); }
+.gap-lg { gap: var(--space-lg); }
+
+/* =============================================================================
+   ANIMATION LIBRARY
+   ============================================================================= */
+
+/* Fade Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Scale Animations - Apple-style spring */
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes scaleInBounce {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.02);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Slide Animations */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideLeft {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Pulse Animation - For status indicators */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.95);
+  }
+}
+
+/* Shimmer - Loading effect */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* Value Update Flash */
+@keyframes valueFlash {
+  0% {
+    background: var(--color-accent-lighter);
+    color: var(--color-accent);
+  }
+  100% {
+    background: transparent;
+    color: var(--color-text-primary);
+  }
+}
+
+/* =============================================================================
+   COMPONENT-SPECIFIC STYLES
+   ============================================================================= */
+
+/* ─── Video Container (Main Focus) ─────────────────────────────────────────── */
+.video-container-premium {
+  position: relative;
+  width: 100%;
+  max-width: 960px;
+  aspect-ratio: 16 / 9;
+  background: var(--color-black);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  transition: transform var(--transition-slow-out),
+              box-shadow var(--transition-slow-out);
+}
+
+.video-container-premium:hover {
+  transform: scale(1.01);
+  box-shadow: var(--shadow-xl);
+}
+
+/* ─── Metric Card (Refined) ────────────────────────────────────────────────── */
+.metric-card-premium {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  transition: all var(--transition-fast-out);
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card-premium:hover {
+  background: var(--color-white);
+  border-color: var(--color-border);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-2px);
+}
+
+.metric-card-premium::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-accent),
+    transparent
+  );
+  opacity: 0;
+  transition: opacity var(--transition-fast-out);
+}
+
+.metric-card-premium:hover::after {
+  opacity: 1;
+}
+
+/* ─── Garment Card (Interactive) ────────────────────────────────────────────── */
+.garment-card-premium {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all var(--transition-fast-out);
+  background: var(--color-surface);
+}
+
+.garment-card-premium:hover {
+  transform: scale(1.05) translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--color-border);
+}
+
+.garment-card-premium.active {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-light),
+              var(--shadow-md);
+}
+
+.garment-card-premium.active::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  background: var(--color-accent);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ─── Status Indicator ────────────────────────────────────────────────────── */
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(52, 199, 89, 0.1);
+  color: var(--color-success);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.status-dot-premium {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 2s var(--ease-in-out) infinite;
+}
+
+/* ─── Section Header ─────────────────────────────────────────────────────────*/
+.section-header {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-lg);
+}
+
+.section-subheader {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wider);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-md);
+}
+
+/* =============================================================================
+   RESPONSIVE UTILITIES
+   ============================================================================= */
+
+/* Hide on mobile */
+@media (max-width: 768px) {
+  .hide-mobile {
+    display: none !important;
+  }
+}
+
+/* Show only on mobile */
+.show-mobile {
+  display: none !important;
+}
+
+@media (max-width: 768px) {
+  .show-mobile {
+    display: block !important;
+  }
+}
+
+/* =============================================================================
+   ACCESSIBILITY
+   ============================================================================= */
+
+/* Focus styles - Subtle ring */
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* =============================================================================
+   PRODUCTION NOTES
+   ============================================================================= */
+
+/**
+ * This design system is inspired by:
+ * - apple.com homepage (2024-2026)
+ * - Apple Health app (iOS 17+)
+ * - Apple Fitness+ interface
+ * - macOS system preferences (Ventura+)
+ *
+ * Key principles applied:
+ * 1. Generous whitespace (48-64px gaps)
+ * 2. Subtle shadows (never harsh)
+ * 3. Smooth motion (Apple's easing)
+ * 4. Clean typography (SF Pro aesthetic)
+ * 5. Minimal borders (rgba, low opacity)
+ * 6. Professional polish (hover states, loading)
+ *
+ * Color philosophy:
+ * - No neon, no sci-fi aesthetics
+ * - Soft neutrals (grays, whites)
+ * - Single accent color (blue)
+ * - Semantic colors for status
+ *
+ * Animation philosophy:
+ * - 60fps hardware-accelerated
+ * - Apple's cubic-bezier curves
+ * - 150-350ms durations (never slower)
+ * - Purposeful, never gratuitous
+ *
+ * Built with Apple-level attention to detail.
+ */

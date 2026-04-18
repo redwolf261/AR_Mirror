@@ -1,0 +1,466 @@
+.fitengine-shell {
+  min-height: calc(100vh - 64px);
+  background: #0d0f13;
+  color: #f4f6f8;
+  padding: 18px 20px;
+  overflow: auto;
+}
+
+.fitengine-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.fitengine-topbar h2 {
+  font-size: 20px;
+  margin: 0 0 4px 0;
+}
+
+.fitengine-topbar p {
+  font-size: 12px;
+  color: #b2b7be;
+  margin: 0;
+}
+
+.fitengine-ghost-btn {
+  border: 1px solid #2a2f36;
+  background: #12161c;
+  color: #d5dae1;
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.fitengine-height-row {
+  display: grid;
+  grid-template-columns: 180px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  background: #12161c;
+  border: 1px solid #232a33;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+}
+
+.fitengine-height-row label {
+  font-size: 12px;
+  color: #c4c9d0;
+}
+
+.fitengine-height-row input {
+  width: 100%;
+  background: #0f1319;
+  border: 1px solid #2b3340;
+  color: #f4f6f8;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.fitengine-reference {
+  font-size: 11px;
+  color: #9ea5af;
+  white-space: nowrap;
+}
+
+.fitengine-grid {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.fitengine-workflow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(320px, 0.85fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.fitengine-workflow-main {
+  min-width: 0;
+}
+
+.fitengine-summary-column {
+  min-width: 0;
+}
+
+.fitengine-grid-main,
+.fitengine-grid-check {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.fitengine-panel {
+  background: #12161c;
+  border: 1px solid #232a33;
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.fitengine-panel-capture {
+  align-items: stretch;
+}
+
+.fitengine-panel h4,
+.fitengine-panel h5 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.fitengine-panel p {
+  margin: 4px 0 8px;
+  font-size: 11px;
+  color: #aab1bb;
+}
+
+.fitengine-frame {
+  width: 100%;
+  max-width: 250px;
+  aspect-ratio: 5 / 8;
+  height: auto;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #2c3440;
+  background: #000;
+  margin: 0 auto;
+}
+
+.fitengine-frame-small {
+  width: 240px;
+  height: 400px;
+  margin: 0 auto;
+}
+
+.fitengine-check {
+  position: relative;
+}
+
+.fitengine-check-warn {
+  border-color: #f0d84a;
+}
+
+.fitengine-check-ok {
+  border-color: #3ed06e;
+}
+
+.fitengine-check-note {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #c5cbd4;
+}
+
+.fitengine-check-note-inline {
+  width: 100%;
+  text-align: center;
+  padding: 7px 10px;
+  border-radius: 6px;
+  margin-top: 10px;
+}
+
+.fitengine-check-inline-ok {
+  background: rgba(62, 208, 110, 0.12);
+  border: 1px solid rgba(62, 208, 110, 0.35);
+  color: #b8f4ca;
+}
+
+.fitengine-check-inline-warn {
+  background: rgba(240, 216, 74, 0.12);
+  border: 1px solid rgba(240, 216, 74, 0.35);
+  color: #f7eaa4;
+}
+
+.fitengine-warning-strip,
+.fitengine-error-strip {
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.fitengine-warning-strip {
+  background: rgba(255, 166, 0, 0.15);
+  border: 1px solid rgba(255, 166, 0, 0.35);
+  color: #ffd08a;
+}
+
+.fitengine-error-strip {
+  background: rgba(255, 72, 72, 0.16);
+  border: 1px solid rgba(255, 72, 72, 0.35);
+  color: #ffc6c6;
+}
+
+.fitengine-actions {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.fitengine-actions button {
+  padding: 10px 8px;
+  border-radius: 6px;
+  border: 1px solid #36404f;
+  background: #181e27;
+  color: #f4f6f8;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.fitengine-actions button:nth-child(4) {
+  background: linear-gradient(135deg, #ff7a00 0%, #ff9a00 100%);
+  border: none;
+  color: #11131a;
+  font-weight: 700;
+}
+
+.fitengine-proceed-btn {
+  background: linear-gradient(135deg, #18b26b 0%, #13915a 100%);
+  border: none;
+  color: #eafff5;
+  font-weight: 700;
+}
+.fitengine-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.fitengine-result-wrap {
+  background: #12161c;
+  border: 1px solid #232a33;
+  border-radius: 8px;
+  padding: 12px;
+  min-height: 150px;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.fitengine-result-wrap-sticky {
+  position: sticky;
+  top: 76px;
+}
+
+.fitengine-result-card {
+  width: 100%;
+  max-width: 100%;
+  background: #1a2432;
+  border: 1px solid #2d4362;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.fitengine-result-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.fitengine-result-subtitle {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #9db0ca;
+}
+
+.fitengine-confidence-pill {
+  flex: 0 0 auto;
+  border: 1px solid rgba(61, 208, 110, 0.35);
+  background: rgba(61, 208, 110, 0.12);
+  color: #b8f4ca;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fitengine-size-hero {
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 800;
+  color: #f8fbff;
+  margin: 0 0 12px;
+}
+
+.fitengine-confidence-line {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #c8d8ec;
+}
+
+.fitengine-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.fitengine-result-card h4 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: #dde8f6;
+}
+
+.fitengine-metric-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgba(168, 188, 214, 0.2);
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+.fitengine-result-card small {
+  display: block;
+  margin-top: 10px;
+  color: #9db0ca;
+}
+
+.fitengine-summary-note {
+  margin-top: 12px;
+  padding: 10px 11px;
+  border-radius: 6px;
+  background: rgba(13, 15, 19, 0.7);
+  border: 1px solid rgba(168, 188, 214, 0.15);
+  color: #d8e3f3;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.fitengine-gate-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.fitengine-gate-badge {
+  font-size: 10px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+  font-weight: 600;
+}
+
+.fitengine-gate-ok {
+  color: #c6ffd8;
+  border-color: rgba(62, 208, 110, 0.45);
+  background: rgba(62, 208, 110, 0.14);
+}
+
+.fitengine-gate-warn {
+  color: #ffe8a5;
+  border-color: rgba(240, 216, 74, 0.45);
+  background: rgba(240, 216, 74, 0.12);
+}
+
+.fitengine-diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.fitengine-breakdown-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.fitengine-breakdown-item {
+  background: rgba(13, 15, 19, 0.62);
+  border: 1px solid rgba(168, 188, 214, 0.2);
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 11px;
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.fitengine-breakdown-item span {
+  color: #9db0ca;
+}
+
+.fitengine-breakdown-item strong {
+  color: #e8f1ff;
+}
+
+.fitengine-reasons {
+  margin-top: 10px;
+  padding: 10px 11px;
+  border-radius: 6px;
+  background: rgba(13, 15, 19, 0.45);
+  border: 1px solid rgba(168, 188, 214, 0.15);
+  color: #dce8f7;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.fitengine-garment-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.fitengine-garment-btn {
+  padding: 10px 8px;
+  border-radius: 8px;
+  border: 1px solid #2f3a4b;
+  background: #171d27;
+  color: #d8e0ea;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.fitengine-garment-btn-active {
+  border-color: #18b26b;
+  background: rgba(24, 178, 107, 0.14);
+  color: #bff5d9;
+}
+
+@media (max-width: 1100px) {
+  .fitengine-height-row {
+    grid-template-columns: 1fr;
+  }
+
+  .fitengine-workflow {
+    grid-template-columns: 1fr;
+  }
+
+  .fitengine-result-wrap-sticky {
+    position: static;
+    top: auto;
+  }
+
+  .fitengine-grid-main,
+  .fitengine-grid-check {
+    grid-template-columns: 1fr;
+  }
+
+  .fitengine-frame {
+    max-width: 100%;
+    aspect-ratio: 4 / 5;
+  }
+
+  .fitengine-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fitengine-mini-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fitengine-breakdown-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fitengine-diagnostics-grid {
+    grid-template-columns: 1fr;
+  }
+}

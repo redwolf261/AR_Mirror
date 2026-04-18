@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 340" fill="none">
+  <!-- Striped tee body -->
+  <path d="M95 55 L35 105 L62 125 L62 280 L238 280 L238 125 L265 105 L205 55 L185 75 C175 88 163 95 150 95 C137 95 125 88 115 75 Z" fill="#1e3a8a" opacity="0.9"/>
+  <!-- Stripes -->
+  <clipPath id="bodyClip"><path d="M62 110 L62 280 L238 280 L238 110 Z"/></clipPath>
+  <g clip-path="url(#bodyClip)">
+    <rect x="62" y="110" width="176" height="18" fill="#1d4ed8" opacity="0.9"/>
+    <rect x="62" y="146" width="176" height="18" fill="#1d4ed8" opacity="0.9"/>
+    <rect x="62" y="182" width="176" height="18" fill="#1d4ed8" opacity="0.9"/>
+    <rect x="62" y="218" width="176" height="18" fill="#1d4ed8" opacity="0.9"/>
+    <rect x="62" y="254" width="176" height="26" fill="#1d4ed8" opacity="0.9"/>
+  </g>
+  <!-- Crew neck  -->
+  <ellipse cx="150" cy="72" rx="32" ry="18" fill="#172554"/>
+  <!-- Sleeves -->
+  <path d="M95 55 L35 105 L62 125 L85 110 L108 68 Z" fill="#1e3a8a" opacity="0.88"/>
+  <path d="M205 55 L265 105 L238 125 L215 110 L192 68 Z" fill="#1e3a8a" opacity="0.88"/>
+  <rect x="35" y="115" width="27" height="10" fill="#1d4ed8" opacity="0.9"/>
+  <rect x="238" y="115" width="27" height="10" fill="#1d4ed8" opacity="0.9"/>
+</svg>

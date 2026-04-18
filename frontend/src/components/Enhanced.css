@@ -1,0 +1,243 @@
+/* =============================================================================
+   Enhanced Components & Animations
+   Additional refinements for premium feel
+   ============================================================================= */
+
+/* Video Stream Loading State */
+.video-stream-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 64px;
+  height: 64px;
+}
+
+.spinner {
+  width: 100%;
+  height: 100%;
+  border: 3px solid rgba(0, 0, 0, 0.1);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Metric Card Enhanced */
+.metric-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.5),
+    transparent
+  );
+  transition: left 0.5s;
+}
+
+.metric-card:hover::before {
+  left: 100%;
+}
+
+/* Value Change Animation */
+@keyframes valueChange {
+  0% { color: var(--color-accent); }
+  100% { color: var(--color-text-primary); }
+}
+
+.metric-value-updated {
+  animation: valueChange 0.5s ease-out;
+}
+
+/* Garment Grid Enhanced */
+.garment-grid-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-md);
+}
+
+.garment-count {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Pagination Dots (if many garments) */
+.pagination-dots {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  padding: var(--space-md) 0;
+}
+
+.pagination-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.1);
+  transition: all var(--transition-fast);
+  cursor: pointer;
+}
+
+.pagination-dot.active {
+  width: 20px;
+  border-radius: 3px;
+  background: var(--color-accent);
+}
+
+/* Smooth Number Transitions */
+.animated-number {
+  display: inline-block;
+  transition: transform var(--transition-base);
+  font-variant-numeric: tabular-nums;
+}
+
+.animated-number.updating {
+  transform: scale(1.1);
+  color: var(--color-accent);
+}
+
+/* Glass Effect Panels */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+/* Keyboard Shortcuts Hint */
+.shortcuts-hint {
+  padding: var(--space-md);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.8;
+}
+
+.shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 2px;
+}
+
+.shortcut-key {
+  background: #ffffff;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  font-family: 'SF Mono', Monaco, monospace;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* Connection Status Banner */
+.connection-banner {
+  position: fixed;
+  bottom: var(--space-lg);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 24px;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(20px);
+  color: white;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  border-radius: 24px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  z-index: 200;
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 20px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* Error State */
+.error-state {
+  text-align: center;
+  padding: var(--space-3xl);
+  color: var(--color-text-secondary);
+}
+
+.error-icon {
+  font-size: 48px;
+  margin-bottom: var(--space-lg);
+  opacity: 0.3;
+}
+
+.error-message {
+  font-size: var(--font-size-md);
+  margin-bottom: var(--space-sm);
+}
+
+.error-details {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+/* Success Micro-interaction */
+.success-flash {
+  animation: successFlash 0.6s ease-out;
+}
+
+@keyframes successFlash {
+  0% { background: rgba(52, 199, 89, 0.2); }
+  100% { background: transparent; }
+}
+
+/* Hover Glow Effect (very subtle) */
+.hover-glow {
+  transition: box-shadow var(--transition-base);
+}
+
+.hover-glow:hover {
+  box-shadow: 0 0 0 1px rgba(0, 113, 227, 0.1),
+              0 8px 32px rgba(0, 113, 227, 0.08);
+}
+
+/* Scrollbar Styling (macOS-like) */
+.measurements-panel::-webkit-scrollbar {
+  width: 12px;
+}
+
+.measurements-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.measurements-panel::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+.measurements-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+  background-clip: padding-box;
+}

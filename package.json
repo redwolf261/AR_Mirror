@@ -1,0 +1,19 @@
+{
+  "name": "ar-mirror",
+  "version": "1.0.0",
+  "scripts": {
+    "stabilize": "powershell -ExecutionPolicy Bypass -File ./stabilize.ps1",
+    "build": "npm run ui:build",
+    "start": "npm run ui:start",
+    "install": "npm run ui:install",
+    "ui:install": "cd frontend/ar-mirror-ui && npm install",
+    "ui:build": "cd frontend/ar-mirror-ui && npm install && npm run build",
+    "ui:start": "cd frontend/ar-mirror-ui && npm start",
+    "backend:install": "cd backend && npm install",
+    "backend:build": "cd backend && npm run build",
+    "backend:dev": "cd backend && npm run start:dev",
+    "autoloop": "powershell -ExecutionPolicy Bypass -File ./scripts/autonomous-dev-loop.ps1"
+  },
+  "keywords": ["ar", "mirror", "react", "frontend"],
+  "description": "AR Mirror - Virtual Try-On Application Frontend"
+}

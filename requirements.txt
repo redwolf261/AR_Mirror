@@ -1,0 +1,55 @@
+# =============================================================
+# AR Mirror - Pinned Dependencies (Python 3.12, CUDA 12.x)
+# Install: pip install -r requirements.txt
+# For a full pip-freeze snapshot, see requirements-ar.txt
+# =============================================================
+
+# --- Core ---
+numpy==1.26.4
+opencv-python==4.10.0.84
+Pillow>=10.0.0
+
+# --- MediaPipe (pose detection) ---
+# Uses lightweight mediapipe without heavy TF dependency
+mediapipe==0.10.14
+
+# --- ONNX Runtime with GPU (body parsing, garment warping) ---
+# Includes CUDA 12 + cuDNN bundled - no separate CUDA toolkit install needed
+onnxruntime-gpu==1.20.1
+
+# --- PyTorch with CUDA 12.4 (neural models) ---
+# Install separately FIRST via:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+# Then install this file. Listed here for documentation only:
+# torch==2.5.1+cu124
+# torchvision==0.20.1+cu124
+
+# --- Utilities ---
+gdown>=5.1.0
+kaggle>=1.6.0
+scipy>=1.12.0
+websockets>=12.0
+
+# --- 3D Body Model ---
+smplx>=0.1.28          # SMPL/SMPL-X parametric body model + LBS skinning
+
+# --- GPU Rendering ---
+moderngl>=5.0.0        # OpenGL 3.3 offscreen rendering (GPU garment mesh)
+trimesh>=4.0.0         # GLB/GLTF garment ingestion and mesh utilities
+pyglet<2               # trimesh scene.save_image backend compatibility
+
+# --- Phase A: ESRGAN texture upscaling ---
+# realesrgan>=0.3.0   # Real-ESRGAN x4plus (install separately if needed)
+# basicsr>=1.4.2      # Required by realesrgan
+
+# --- Phase C: RobustVideoMatting ---
+# onnxruntime-gpu already listed above satisfies RVM's runtime requirement
+
+# --- Phase D/E: Diffusion-based try-on (OOTDiffusion) ---
+# Heavy (~6 GB model); install only when using OOTDiffusion async warper:
+# diffusers>=0.27.0
+# transformers>=4.38.0
+# accelerate>=0.26.0
+
+# --- Social Share Feature ---
+qrcode[pil]>=7.4          # QR code generation for share URLs

@@ -1,0 +1,409 @@
+/* ShareModal.module.css */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: rgba(5, 5, 10, 0.82);
+  backdrop-filter: blur(12px) saturate(160%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.modal {
+  width: min(860px, 96vw);
+  max-height: 94vh;
+  overflow-y: auto;
+  background: var(--bg-surface, #0D0D18);
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  border-radius: 24px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 40px 80px rgba(0, 0, 0, 0.7),
+    0 0 80px rgba(14, 165, 233, 0.12);
+  padding: 28px 30px 30px;
+  scrollbar-width: thin;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.icon {
+  font-size: 26px;
+  flex-shrink: 0;
+}
+
+.title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary, #F8F8FF);
+  background: linear-gradient(90deg, #38BDF8, #06B6D4);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin: 0;
+}
+
+.subtitle {
+  font-size: 13px;
+  color: var(--text-secondary, #8B8BA7);
+  margin: 2px 0 0;
+}
+
+.closeBtn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary, #8B8BA7);
+  border-radius: 999px;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.closeBtn:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #F87171;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+/* ── Expire badge ─────────────────────────────────────────────────────────── */
+
+.expireRow {
+  margin-bottom: 18px;
+}
+
+.expireBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #FCD34D;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+}
+
+.offlineBanner {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #FDE68A;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
+/* Shown after image downloads before WhatsApp opens */
+.downloadHint {
+  background: rgba(6, 182, 212, 0.08);
+  border: 1px solid rgba(6, 182, 212, 0.3);
+  color: #67E8F9;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  margin-bottom: 4px;
+  animation: fadeSlide 0.3s ease;
+}
+
+@keyframes fadeSlide {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Subtle info tip on desktop */
+.desktopTip {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  color: var(--text-muted, #4A4A65);
+  border-radius: 10px;
+  padding: 9px 13px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* Disabled/loading state on WhatsApp button */
+.btnLoading {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* ── Grid layout ──────────────────────────────────────────────────────────── */
+
+.grid {
+  display: grid;
+  grid-template-columns: 290px 1fr;
+  gap: 28px;
+}
+
+@media (max-width: 680px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Section label ─────────────────────────────────────────────────────────── */
+
+.sectionLabel {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted, #4A4A65);
+  margin-bottom: 10px;
+}
+
+/* ── Left panel (QR + NFC) ─────────────────────────────────────────────────── */
+
+.leftPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.qrWrap {
+  background: #fff;
+  border-radius: 16px;
+  padding: 12px;
+  display: inline-flex;
+  align-self: flex-start;
+  box-shadow: 0 0 30px rgba(14, 165, 233, 0.25);
+}
+
+.qr {
+  width: 220px;
+  height: 220px;
+  display: block;
+  border-radius: 8px;
+  image-rendering: pixelated;
+}
+
+.qrPlaceholder {
+  width: 220px;
+  height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  text-align: center;
+  color: var(--text-muted, #4A4A65);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* NFC panel */
+.nfcPanel {
+  background: rgba(6, 182, 212, 0.05);
+  border: 1px solid rgba(6, 182, 212, 0.2);
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+
+.nfcHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.nfcIcon {
+  font-size: 16px;
+}
+
+.nfcHeader strong {
+  font-size: 14px;
+  color: #67E8F9;
+}
+
+.nfcDesc {
+  font-size: 12px;
+  color: var(--text-secondary, #8B8BA7);
+  line-height: 1.55;
+  margin-bottom: 10px;
+}
+
+.nfcUri {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  overflow: auto;
+}
+
+.nfcUri code {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: #06B6D4;
+  word-break: break-all;
+}
+
+.nfcCopyBtn {
+  background: rgba(6, 182, 212, 0.12);
+  border: 1px solid rgba(6, 182, 212, 0.35);
+  color: #67E8F9;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.nfcCopyBtn:hover {
+  background: rgba(6, 182, 212, 0.22);
+}
+
+/* ── Right panel (preview + social) ────────────────────────────────────────── */
+
+.rightPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.previewWrap {
+  position: relative;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  box-shadow: 0 0 32px rgba(14, 165, 233, 0.15);
+  flex-shrink: 0;
+}
+
+.preview {
+  width: 100%;
+  max-height: 240px;
+  object-fit: cover;
+  display: block;
+}
+
+.previewBadge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(16, 185, 129, 0.85);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  border-radius: 999px;
+  padding: 3px 9px;
+  backdrop-filter: blur(4px);
+}
+
+/* Social buttons */
+.socialRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: filter 0.15s, transform 0.1s;
+}
+
+.btn:hover {
+  filter: brightness(1.12);
+  transform: translateY(-1px);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+.btnWhatsapp {
+  background: #25D366;
+  color: #fff;
+}
+
+.btnX {
+  background: #000;
+  color: #fff;
+  border: 1px solid #333;
+}
+
+.btnCopy {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-primary, #F8F8FF);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* Download */
+.downloadBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(14, 165, 233, 0.45);
+  background: rgba(14, 165, 233, 0.1);
+  color: #38BDF8;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: background 0.15s;
+}
+
+.downloadBtn:hover {
+  background: rgba(14, 165, 233, 0.2);
+}
+
+/* URL row */
+.urlRow {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.urlLabel {
+  font-size: 11px;
+  color: var(--text-muted, #4A4A65);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.urlText {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-secondary, #8B8BA7);
+  word-break: break-all;
+  line-height: 1.5;
+}

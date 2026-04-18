@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 380" fill="none">
+  <!-- Navy blazer body -->
+  <path d="M80 55 L20 115 L55 140 L55 350 L245 350 L245 140 L280 115 L220 55 L190 85 L165 115 L135 115 L110 85 Z" fill="#0f172a" opacity="0.95"/>
+  <!-- Left lapel -->
+  <path d="M135 115 L110 85 L90 95 L80 130 L120 160 L138 140 Z" fill="#1e293b"/>
+  <!-- Right lapel -->
+  <path d="M165 115 L190 85 L210 95 L220 130 L180 160 L162 140 Z" fill="#1e293b"/>
+  <!-- Left sleeve -->
+  <path d="M80 55 L20 115 L55 140 L78 128 L100 75 Z" fill="#0f172a" opacity="0.92"/>
+  <!-- Right sleeve -->
+  <path d="M220 55 L280 115 L245 140 L222 128 L200 75 Z" fill="#0f172a" opacity="0.92"/>
+  <!-- Lapel peak lines -->
+  <line x1="80" y1="130" x2="120" y2="160" stroke="#334155" stroke-width="1"/>
+  <line x1="220" y1="130" x2="180" y2="160" stroke="#334155" stroke-width="1"/>
+  <!-- Buttons -->
+  <circle cx="150" cy="185" r="5" fill="#334155"/>
+  <circle cx="150" cy="220" r="5" fill="#334155"/>
+  <circle cx="150" cy="255" r="5" fill="#334155"/>
+  <!-- Pocket left -->
+  <rect x="75" y="225" width="40" height="25" rx="3" fill="#1e293b"/>
+  <!-- Pocket right -->
+  <rect x="185" y="225" width="40" height="25" rx="3" fill="#1e293b"/>
+  <!-- Ticket pocket -->
+  <rect x="185" y="195" width="30" height="20" rx="2" fill="#1e293b"/>
+  <!-- Sleeve buttons -->
+  <circle cx="58" cy="136" r="3" fill="#334155"/>
+  <circle cx="242" cy="136" r="3" fill="#334155"/>
+</svg>

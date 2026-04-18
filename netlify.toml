@@ -1,0 +1,25 @@
+# Netlify Configuration - Frontend Only
+# This config tells Netlify to only build the React frontend
+
+[build]
+  base = "frontend/ar-mirror-ui"
+  command = "npm run build"
+  publish = "frontend/ar-mirror-ui/build"
+
+[build.environment]
+  NODE_VERSION = "18"
+
+# Ignore Python dependencies and backend files
+[build.ignore]
+  command = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- frontend/ || exit 0"
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://ar-mirror-backend.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

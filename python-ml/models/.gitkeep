@@ -1,0 +1,3 @@
+# .gitkeep - Ensures models directory is tracked by git
+# Actual model files are gitignored
+# Download models using: python scripts/setup/download_models.py

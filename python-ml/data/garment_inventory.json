@@ -1,0 +1,194 @@
+[
+  {
+    "sku": "TSH-001",
+    "brand": "UrbanFit",
+    "name": "Classic Cotton Tee",
+    "category": "t-shirt",
+    "color": "Navy Blue",
+    "price_inr": 599,
+    "available_sizes": ["S", "M", "L", "XL"],
+    "sizes": {
+      "S": {"shoulder_cm": 42.0, "chest_cm": 46.0, "length_cm": 62.0, "ease_shoulder": 2.0, "ease_chest": 4.0},
+      "M": {"shoulder_cm": 44.0, "chest_cm": 50.0, "length_cm": 65.0, "ease_shoulder": 2.0, "ease_chest": 4.0},
+      "L": {"shoulder_cm": 46.0, "chest_cm": 54.0, "length_cm": 68.0, "ease_shoulder": 2.0, "ease_chest": 4.0},
+      "XL": {"shoulder_cm": 48.0, "chest_cm": 58.0, "length_cm": 70.0, "ease_shoulder": 2.0, "ease_chest": 4.0}
+    },
+    "image_path": "garment_assets/TSH-001"
+  },
+  {
+    "sku": "TSH-002",
+    "brand": "SportZone",
+    "name": "Performance Athletic Tee",
+    "category": "t-shirt",
+    "color": "Black",
+    "price_inr": 799,
+    "available_sizes": ["S", "M", "L", "XL"],
+    "sizes": {
+      "S": {"shoulder_cm": 41.0, "chest_cm": 45.0, "length_cm": 61.0, "ease_shoulder": 1.5, "ease_chest": 3.0},
+      "M": {"shoulder_cm": 43.0, "chest_cm": 49.0, "length_cm": 64.0, "ease_shoulder": 1.5, "ease_chest": 3.0},
+      "L": {"shoulder_cm": 45.0, "chest_cm": 53.0, "length_cm": 67.0, "ease_shoulder": 1.5, "ease_chest": 3.0},
+      "XL": {"shoulder_cm": 47.0, "chest_cm": 57.0, "length_cm": 69.0, "ease_shoulder": 1.5, "ease_chest": 3.0}
+    },
+    "image_path": "garment_assets/TSH-002"
+  },
+  {
+    "sku": "SHT-001",
+    "brand": "FormalEdge",
+    "name": "Slim Fit Dress Shirt",
+    "category": "shirt",
+    "color": "White",
+    "price_inr": 1299,
+    "available_sizes": ["S", "M", "L", "XL"],
+    "sizes": {
+      "S": {"shoulder_cm": 41.0, "chest_cm": 44.0, "length_cm": 66.0, "ease_shoulder": 1.0, "ease_chest": 2.0},
+      "M": {"shoulder_cm": 43.0, "chest_cm": 48.0, "length_cm": 68.0, "ease_shoulder": 1.0, "ease_chest": 2.0},
+      "L": {"shoulder_cm": 45.0, "chest_cm": 52.0, "length_cm": 70.0, "ease_shoulder": 1.0, "ease_chest": 2.0},
+      "XL": {"shoulder_cm": 47.0, "chest_cm": 56.0, "length_cm": 72.0, "ease_shoulder": 1.0, "ease_chest": 2.0}
+    },
+    "image_path": "garment_assets/SHT-001"
+  },
+  {
+    "sku": "SHT-002",
+    "brand": "CasualVibes",
+    "name": "Relaxed Oxford Shirt",
+    "category": "shirt",
+    "color": "Light Blue",
+    "price_inr": 999,
+    "available_sizes": ["S", "M", "L", "XL"],
+    "sizes": {
+      "S": {"shoulder_cm": 42.0, "chest_cm": 47.0, "length_cm": 65.0, "ease_shoulder": 2.5, "ease_chest": 5.0},
+      "M": {"shoulder_cm": 44.0, "chest_cm": 51.0, "length_cm": 67.0, "ease_shoulder": 2.5, "ease_chest": 5.0},
+      "L": {"shoulder_cm": 46.0, "chest_cm": 55.0, "length_cm": 69.0, "ease_shoulder": 2.5, "ease_chest": 5.0},
+      "XL": {"shoulder_cm": 48.0, "chest_cm": 59.0, "length_cm": 71.0, "ease_shoulder": 2.5, "ease_chest": 5.0}
+    },
+    "image_path": "garment_assets/SHT-002"
+  },
+  {
+    "sku": "JKT-001",
+    "brand": "UrbanFit",
+    "name": "Bomber Jacket",
+    "category": "jacket",
+    "color": "Olive Green",
+    "price_inr": 2499,
+    "available_sizes": ["S", "M", "L", "XL"],
+    "sizes": {
+      "S": {"shoulder_cm": 43.0, "chest_cm": 50.0, "length_cm": 60.0, "ease_shoulder": 3.0, "ease_chest": 6.0},
+      "M": {"shoulder_cm": 45.0, "chest_cm": 54.0, "length_cm": 62.0, "ease_shoulder": 3.0, "ease_chest": 6.0},
+      "L": {"shoulder_cm": 47.0, "chest_cm": 58.0, "length_cm": 64.0, "ease_shoulder": 3.0, "ease_chest": 6.0},
+      "XL": {"shoulder_cm": 49.0, "chest_cm": 62.0, "length_cm": 66.0, "ease_shoulder": 3.0, "ease_chest": 6.0}
+    },
+    "image_path": "garment_assets/JKT-001"
+  },
+  {
+    "sku": "JKT-002",
+    "brand": "TechWear",
+    "name": "Windbreaker Jacket",
+    "category": "jacket",
+    "color": "Gray",
+    "price_inr": 1899,
+    "available_sizes": ["S", "M", "L", "XL"],
+    "sizes": {
+      "S": {"shoulder_cm": 44.0, "chest_cm": 52.0, "length_cm": 62.0, "ease_shoulder": 4.0, "ease_chest": 8.0},
+      "M": {"shoulder_cm": 46.0, "chest_cm": 56.0, "length_cm": 64.0, "ease_shoulder": 4.0, "ease_chest": 8.0},
+      "L": {"shoulder_cm": 48.0, "chest_cm": 60.0, "length_cm": 66.0, "ease_shoulder": 4.0, "ease_chest": 8.0},
+      "XL": {"shoulder_cm": 50.0, "chest_cm": 64.0, "length_cm": 68.0, "ease_shoulder": 4.0, "ease_chest": 8.0}
+    },
+    "image_path": "garment_assets/JKT-002"
+  },
+  {
+    "sku": "HOD-001",
+    "brand": "StreetStyle",
+    "name": "Classic Hoodie",
+    "category": "hoodie",
+    "color": "Maroon",
+    "price_inr": 1599,
+    "available_sizes": ["S", "M", "L", "XL"],
+    "sizes": {
+      "S": {"shoulder_cm": 44.0, "chest_cm": 51.0, "length_cm": 64.0, "ease_shoulder": 3.5, "ease_chest": 7.0},
+      "M": {"shoulder_cm": 46.0, "chest_cm": 55.0, "length_cm": 66.0, "ease_shoulder": 3.5, "ease_chest": 7.0},
+      "L": {"shoulder_cm": 48.0, "chest_cm": 59.0, "length_cm": 68.0, "ease_shoulder": 3.5, "ease_chest": 7.0},
+      "XL": {"shoulder_cm": 50.0, "chest_cm": 63.0, "length_cm": 70.0, "ease_shoulder": 3.5, "ease_chest": 7.0}
+    },
+    "image_path": "garment_assets/HOD-001"
+  },
+  {
+    "sku": "HOD-002",
+    "brand": "SportZone",
+    "name": "Zip-Up Hoodie",
+    "category": "hoodie",
+    "color": "Navy",
+    "price_inr": 1799,
+    "available_sizes": ["S", "M", "L", "XL"],
+    "sizes": {
+      "S": {"shoulder_cm": 43.0, "chest_cm": 50.0, "length_cm": 63.0, "ease_shoulder": 3.0, "ease_chest": 6.0},
+      "M": {"shoulder_cm": 45.0, "chest_cm": 54.0, "length_cm": 65.0, "ease_shoulder": 3.0, "ease_chest": 6.0},
+      "L": {"shoulder_cm": 47.0, "chest_cm": 58.0, "length_cm": 67.0, "ease_shoulder": 3.0, "ease_chest": 6.0},
+      "XL": {"shoulder_cm": 49.0, "chest_cm": 62.0, "length_cm": 69.0, "ease_shoulder": 3.0, "ease_chest": 6.0}
+    },
+    "image_path": "garment_assets/HOD-002"
+  },
+  {
+    "sku": "PLO-001",
+    "brand": "FormalEdge",
+    "name": "Classic Polo Shirt",
+    "category": "polo",
+    "color": "Forest Green",
+    "price_inr": 899,
+    "available_sizes": ["S", "M", "L", "XL"],
+    "sizes": {
+      "S": {"shoulder_cm": 41.5, "chest_cm": 46.0, "length_cm": 63.0, "ease_shoulder": 1.5, "ease_chest": 3.5},
+      "M": {"shoulder_cm": 43.5, "chest_cm": 50.0, "length_cm": 65.0, "ease_shoulder": 1.5, "ease_chest": 3.5},
+      "L": {"shoulder_cm": 45.5, "chest_cm": 54.0, "length_cm": 67.0, "ease_shoulder": 1.5, "ease_chest": 3.5},
+      "XL": {"shoulder_cm": 47.5, "chest_cm": 58.0, "length_cm": 69.0, "ease_shoulder": 1.5, "ease_chest": 3.5}
+    },
+    "image_path": "garment_assets/PLO-001"
+  },
+  {
+    "sku": "PLO-002",
+    "brand": "CasualVibes",
+    "name": "Pique Polo",
+    "category": "polo",
+    "color": "Burgundy",
+    "price_inr": 799,
+    "available_sizes": ["S", "M", "L", "XL"],
+    "sizes": {
+      "S": {"shoulder_cm": 42.0, "chest_cm": 47.0, "length_cm": 62.0, "ease_shoulder": 2.0, "ease_chest": 4.0},
+      "M": {"shoulder_cm": 44.0, "chest_cm": 51.0, "length_cm": 64.0, "ease_shoulder": 2.0, "ease_chest": 4.0},
+      "L": {"shoulder_cm": 46.0, "chest_cm": 55.0, "length_cm": 66.0, "ease_shoulder": 2.0, "ease_chest": 4.0},
+      "XL": {"shoulder_cm": 48.0, "chest_cm": 59.0, "length_cm": 68.0, "ease_shoulder": 2.0, "ease_chest": 4.0}
+    },
+    "image_path": "garment_assets/PLO-002"
+  },
+  {
+    "sku": "SWT-001",
+    "brand": "WinterWear",
+    "name": "Crew Neck Sweater",
+    "category": "sweater",
+    "color": "Charcoal",
+    "price_inr": 1999,
+    "available_sizes": ["S", "M", "L", "XL"],
+    "sizes": {
+      "S": {"shoulder_cm": 43.0, "chest_cm": 49.0, "length_cm": 64.0, "ease_shoulder": 2.5, "ease_chest": 5.0},
+      "M": {"shoulder_cm": 45.0, "chest_cm": 53.0, "length_cm": 66.0, "ease_shoulder": 2.5, "ease_chest": 5.0},
+      "L": {"shoulder_cm": 47.0, "chest_cm": 57.0, "length_cm": 68.0, "ease_shoulder": 2.5, "ease_chest": 5.0},
+      "XL": {"shoulder_cm": 49.0, "chest_cm": 61.0, "length_cm": 70.0, "ease_shoulder": 2.5, "ease_chest": 5.0}
+    },
+    "image_path": "garment_assets/SWT-001"
+  },
+  {
+    "sku": "SWT-002",
+    "brand": "UrbanFit",
+    "name": "V-Neck Sweater",
+    "category": "sweater",
+    "color": "Beige",
+    "price_inr": 1799,
+    "available_sizes": ["S", "M", "L", "XL"],
+    "sizes": {
+      "S": {"shoulder_cm": 42.0, "chest_cm": 48.0, "length_cm": 63.0, "ease_shoulder": 2.0, "ease_chest": 4.5},
+      "M": {"shoulder_cm": 44.0, "chest_cm": 52.0, "length_cm": 65.0, "ease_shoulder": 2.0, "ease_chest": 4.5},
+      "L": {"shoulder_cm": 46.0, "chest_cm": 56.0, "length_cm": 67.0, "ease_shoulder": 2.0, "ease_chest": 4.5},
+      "XL": {"shoulder_cm": 48.0, "chest_cm": 60.0, "length_cm": 69.0, "ease_shoulder": 2.0, "ease_chest": 4.5}
+    },
+    "image_path": "garment_assets/SWT-002"
+  }
+]
